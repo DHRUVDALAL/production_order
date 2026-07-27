@@ -1,0 +1,13 @@
+ID,code,plant_ID,name,category,capacityQty,capacityUnit,costCenter
+156e9c24-6b02-43d3-9895-f700a47bea38,"WC-MACH",3c30a61c-edbe-4452-8fec-53163b101db3,"CNC Milling Center","Machine",24,"HR","CC1001"
+6ce372a0-7f0f-400b-8528-865c0c114feb,"WC-ASSY",3c30a61c-edbe-4452-8fec-53163b101db3,"Manual Assembly Line","Labor",50,"HR","CC1002"
+8306c681-b43f-4ed7-b40d-d6ec1b299ef1,"WC-TEST",3c30a61c-edbe-4452-8fec-53163b101db3,"Electrical Tester Unit","Machine",10,"HR","CC1003"
+e0347ce5-017e-42a7-bb83-da0afc727ab7,"WC-PACK",3c30a61c-edbe-4452-8fec-53163b101db3,"Packaging Center","Labor",100,"HR","CC1004"
+77946d27-cb4c-40b6-9cd4-d780eafc2844,"WC-MACH",e6805119-7956-435d-9c48-9d2cf51f8da0,"CNC Milling Center","Machine",24,"HR","CC1001"
+9716bae0-4a2d-482a-9dfb-f738e5c0c754,"WC-ASSY",e6805119-7956-435d-9c48-9d2cf51f8da0,"Manual Assembly Line","Labor",50,"HR","CC1002"
+52fb66f8-8192-4b7c-b77d-0e8e96181bae,"WC-TEST",e6805119-7956-435d-9c48-9d2cf51f8da0,"Electrical Tester Unit","Machine",10,"HR","CC1003"
+ddff182b-740d-45aa-a88c-38ddb65fd57d,"WC-PACK",e6805119-7956-435d-9c48-9d2cf51f8da0,"Packaging Center","Labor",100,"HR","CC1004"
+344df459-d404-446d-8d37-3842c017c415,"WC-MACH",9a600377-4b5d-4739-a90a-8ef135614126,"CNC Milling Center","Machine",24,"HR","CC1001"
+24e5c6c5-5fd5-473e-82a6-99d0422fd375,"WC-ASSY",9a600377-4b5d-4739-a90a-8ef135614126,"Manual Assembly Line","Labor",50,"HR","CC1002"
+95916762-3a66-4be6-80ea-b8aca1514cbd,"WC-TEST",9a600377-4b5d-4739-a90a-8ef135614126,"Electrical Tester Unit","Machine",10,"HR","CC1003"
+63ef3db4-71f3-4825-b04f-bb71b48da4fd,"WC-PACK",9a600377-4b5d-4739-a90a-8ef135614126,"Packaging Center","Labor",100,"HR","CC1004"

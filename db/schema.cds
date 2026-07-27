@@ -1,75 +1,185 @@
-namespace abhiyanta.po;
+namespace sap.production.portal;
 
-// Domain model for the Production Order mock.
-//
-// IMPORTANT: every element name here mirrors SAP's API_PRODUCTION_ORDER_2_SRV.
-// Do not rename anything for convenience — matching names are what let this
-// demo swap to the live S/4HANA service by replacing the data source only.
+using { cuid, managed } from '@sap/cds/common';
 
-/** Production order header — the entity Create / Change / Display act on. */
-entity ProductionOrder {
-      /** Order number, e.g. '1000000001'. Generated on create. */
-  key ManufacturingOrder       : String(12);
-      /** Order type, e.g. 'PP01'. */
-      ManufacturingOrderType   : String(4);
-      /** Finished-goods material. Mandatory on create (enforced in the handler). */
-      Material                 : String(40);
-      /** Plant, e.g. '1100'. */
-      ProductionPlant          : String(4);
-      TotalQuantity            : Decimal(13, 3);
-      /** Base unit of measure, e.g. 'PC'. */
-      ProductionUnit           : String(3);
-      MfgOrderPlannedStartDate : Date;
-      /** Planned finish date. */
-      MfgOrderPlannedEndDate   : Date;
-      ProductionSupervisor     : String(3);
-      OrderIsReleased          : Boolean;
-      /** CRTD | REL | PCNF | CNF — drives the status pill. */
-      ProductionOrderStatus    : String(4);
+// -------------------------------------------------------------
+// MASTER DATA ENTITIES
+// -------------------------------------------------------------
 
-      to_Operations            : Composition of many ProductionOrderOperation
-                                   on to_Operations.ManufacturingOrder = $self.ManufacturingOrder;
-      to_Components            : Composition of many ProductionOrderComponent
-                                   on to_Components.ManufacturingOrder = $self.ManufacturingOrder;
+entity Plants : cuid, managed {
+    code        : String(4); // e.g. "PL01", "PL02"
+    name        : String(100);
+    description : String(255);
+    location    : String(100);
+    storageLocations : Association to many StorageLocations on storageLocations.plant = $self;
 }
 
-/** Order operations. Read-only in the app — no operation create or edit. */
-entity ProductionOrderOperation {
-  key ManufacturingOrder              : String(12);
-      /** Sequence, e.g. '000000' for the standard sequence. */
-      ManufacturingOrderSequence      : String(6);
-      /** Operation number, e.g. '0010'. */
-  key ManufacturingOrderOperation     : String(4);
-      OperationText                   : String(40);
-      WorkCenter                      : String(8);
-      OperationConfirmedYieldQuantity : Decimal(13, 3);
-      /** CRTD | REL | PCNF | CNF */
-      OperationStatus                 : String(4);
+entity StorageLocations : cuid, managed {
+    code        : String(4); // e.g. "SL01", "SL02"
+    name        : String(100);
+    plant       : Association to Plants;
 }
 
-/** Component list (BOM explosion). Display-only — no component add. */
-entity ProductionOrderComponent {
-  key ManufacturingOrder : String(12);
-      /** Reservation number carrying the component requirement. */
-      Reservation        : String(10);
-      /** Reservation item — the component's key within the order. */
-  key ReservationItem    : String(4);
-      /** Component material. */
-      Material           : String(40);
-      RequiredQuantity   : Decimal(13, 3);
-      WithdrawnQuantity  : Decimal(13, 3);
-      ProductionPlant    : String(4);
+entity Materials : cuid, managed {
+    code         : String(18); // SAP standard allows up to 18 or 40 chars
+    description  : String(255);
+    materialGroup: String(20);  // e.g. "RAW", "SEMI", "FINISHED"
+    baseUnit     : String(3);   // e.g. "PC", "KG", "L"
+    standardPrice: Decimal(15, 2);
+    currency     : String(3) default 'USD';
+    isActive     : Boolean default true;
+    plant        : Association to Plants;
 }
 
-/** Append-only log of confirmation postings. One row per confirmOperation call. */
-entity Confirmation {
-  key ConfirmationID             : UUID;
-      OrderID                    : String(12);
-      Sequence                   : String(6);
-      OrderOperation             : String(4);
-      ConfirmationYieldQuantity  : Decimal(13, 3);
-      ConfirmationScrapQuantity  : Decimal(13, 3);
-      /** 'X' = final confirmation, ' ' = partial. */
-      FinalConfirmationType      : String(1);
-      PostingDate                : DateTime;
+entity WorkCenters : cuid, managed {
+    code        : String(8); // e.g. "WC-ASSY", "WC-TEST"
+    plant       : Association to Plants;
+    name        : String(100);
+    category    : String(20); // e.g. "Machine", "Labor", "Assembly Line"
+    capacityQty : Decimal(10, 2); // capacity units per hour
+    capacityUnit: String(3) default 'HR';
+    costCenter  : String(10); // cost center allocation
+}
+
+entity Routings : cuid, managed {
+    material    : Association to Materials;
+    plant       : Association to Plants;
+    description : String(255);
+    operations  : Composition of many RoutingOperations on operations.routing = $self;
+}
+
+entity RoutingOperations : cuid, managed {
+    routing      : Association to Routings;
+    sequence     : Integer; // e.g. 10, 20, 30
+    workCenter   : Association to WorkCenters;
+    description  : String(255);
+    standardTime : Decimal(10, 2); // standard execution time
+    timeUnit     : String(3) default 'MIN';
+}
+
+entity BOMs : cuid, managed {
+    material    : Association to Materials;
+    plant       : Association to Plants;
+    description : String(255);
+    components  : Composition of many BOMComponents on components.bom = $self;
+}
+
+entity BOMComponents : cuid, managed {
+    bom              : Association to BOMs;
+    componentMaterial: Association to Materials;
+    requiredQty      : Decimal(15, 3);
+    unit             : String(3) default 'PC';
+}
+
+// -------------------------------------------------------------
+// USER MANAGEMENT & RBAC
+// -------------------------------------------------------------
+
+entity Users : cuid, managed {
+    username     : String(50);
+    passwordHash : String(255);
+    email        : String(100);
+    name         : String(100);
+    department   : String(50);
+    roles        : Composition of many UserRoles on roles.user = $self;
+}
+
+entity Roles : cuid, managed {
+    code         : String(20); // e.g. "PROD_PLANNER", "SYS_ADMIN"
+    name         : String(100);
+    description  : String(255);
+    userRoles    : Association to many UserRoles on userRoles.role = $self;
+}
+
+entity UserRoles : cuid, managed {
+    user         : Association to Users;
+    role         : Association to Roles;
+}
+
+// -------------------------------------------------------------
+// TRANSACTIONAL DATA ENTITIES
+// -------------------------------------------------------------
+
+entity ProductionOrders : cuid, managed {
+    orderNumber     : String(12); // e.g. "100000000001"
+    material        : Association to Materials;
+    plant           : Association to Plants;
+    storageLocation : Association to StorageLocations;
+    targetQty       : Decimal(15, 3);
+    confirmedQty    : Decimal(15, 3) default 0;
+    deliveredQty    : Decimal(15, 3) default 0;
+    status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
+    plannedStartDate: Date;
+    plannedEndDate  : Date;
+    actualStartDate : DateTime;
+    actualEndDate   : DateTime;
+    operations      : Composition of many OrderOperations on operations.order = $self;
+    components      : Composition of many OrderComponents on components.order = $self;
+    goodsMovements  : Association to many GoodsMovements on goodsMovements.order = $self;
+}
+
+entity OrderOperations : cuid, managed {
+    order          : Association to ProductionOrders;
+    sequence       : Integer;
+    workCenter     : Association to WorkCenters;
+    description    : String(255);
+    standardTime   : Decimal(10, 2);
+    timeUnit       : String(3) default 'MIN';
+    confirmedTime  : Decimal(10, 2) default 0;
+    yieldQty       : Decimal(15, 3) default 0;
+    scrapQty       : Decimal(15, 3) default 0;
+    status         : String(10) default 'CRTD'; // CRTD, REL, STRT, PCNF, CNF
+}
+
+entity OrderComponents : cuid, managed {
+    order             : Association to ProductionOrders;
+    componentMaterial : Association to Materials;
+    requiredQty       : Decimal(15, 3);
+    issuedQty         : Decimal(15, 3) default 0;
+    unit              : String(3) default 'PC';
+    isBackflushed     : Boolean default false;
+    status            : String(10) default 'RESV'; // RESV, MSPT, ISSD
+}
+
+entity GoodsMovements : cuid, managed {
+    movementNumber : String(10); // e.g. "MATDOC0001"
+    order          : Association to ProductionOrders;
+    material       : Association to Materials;
+    plant          : Association to Plants;
+    storageLocation: Association to StorageLocations;
+    movementType   : String(3); // '101' for GR, '261' for GI, '350' for QM Block, '551' for Scrap
+    quantity       : Decimal(15, 3);
+    unit           : String(3);
+    postingDate    : Date;
+}
+
+entity QualityInspectionLots : cuid, managed {
+    lotNumber      : String(12); // e.g. "040000000001"
+    order          : Association to ProductionOrders;
+    material       : Association to Materials;
+    plant          : Association to Plants;
+    lotQty         : Decimal(15, 3);
+    inspectedQty   : Decimal(15, 3) default 0;
+    approvedQty    : Decimal(15, 3) default 0;
+    rejectedQty    : Decimal(15, 3) default 0;
+    usageDecision  : String(4) default ''; // 'UDAC' (Accept), 'UDRJ' (Reject)
+    status         : String(10) default 'CRTD'; // CRTD, INSP, COMP
+    inspector      : Association to Users;
+    decisionDate   : DateTime;
+}
+
+entity ProductionNotifications : cuid, managed {
+    type           : String(10); // ALERT, INFO, ERROR
+    order          : Association to ProductionOrders;
+    message        : String(1000);
+    isRead         : Boolean default false;
+}
+
+entity AuditLogs : cuid, managed {
+    user           : Association to Users;
+    action         : String(100);
+    entityName     : String(100);
+    entityId       : UUID;
+    oldValues      : LargeString;
+    newValues      : LargeString;
 }

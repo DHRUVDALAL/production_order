@@ -1,0 +1,106 @@
+ID,code,description,materialGroup,baseUnit,standardPrice,currency,isActive,plant_ID
+3f6ede0c-8f53-4697-b494-a66ff2143fe1,"RM-001","Raw Material component type 001","RAW","PC",19.63,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+6e3ba7b6-f6f4-455b-8796-89cdad3623c2,"RM-002","Raw Material component type 002","RAW","PC",5.80,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+c1f75d0d-8536-4806-a881-5488c55d7da9,"RM-003","Raw Material component type 003","RAW","PC",11.71,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+6e8ce3dc-f445-46c7-b982-ad8809420e67,"RM-004","Raw Material component type 004","RAW","PC",8.35,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+4998e5be-c3f3-44c6-88b1-f8f059b513a3,"RM-005","Raw Material component type 005","RAW","PC",12.04,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+dda3e1a3-3623-4194-8258-a014629dfcfa,"RM-006","Raw Material component type 006","RAW","PC",7.84,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+0e3d2584-92e9-4e90-9d64-0fa3a88c03d7,"RM-007","Raw Material component type 007","RAW","PC",6.09,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+6944c401-2f29-4c18-b995-1f643d1ee36d,"RM-008","Raw Material component type 008","RAW","PC",17.50,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+998ecd99-800d-45cb-b7b7-ecfb91d448e3,"RM-009","Raw Material component type 009","RAW","PC",12.88,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+1ad011a2-0f4b-43d1-a1fa-edb31e9f8e00,"RM-010","Raw Material component type 010","RAW","PC",14.96,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+6b0a08e0-d2c7-485f-9af3-482af1797018,"RM-011","Raw Material component type 011","RAW","PC",4.83,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+02369bb9-e517-489c-adcc-181915d91914,"RM-012","Raw Material component type 012","RAW","PC",5.23,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+287d6f4d-14d1-4460-98b0-e220f61b392c,"RM-013","Raw Material component type 013","RAW","PC",19.04,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+485a4379-65c4-4271-afeb-f33f3a71a8be,"RM-014","Raw Material component type 014","RAW","PC",10.99,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+f2d80dbc-8688-4f37-b252-b0d756a9e267,"RM-015","Raw Material component type 015","RAW","PC",10.14,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+a0d83e4e-07ab-4010-a96f-f3a9d991ed01,"RM-016","Raw Material component type 016","RAW","PC",15.30,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+a6e8013a-1374-4fb9-ad04-dad910717a56,"RM-017","Raw Material component type 017","RAW","PC",17.32,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+7055e7d3-2b22-4cc6-8fd5-6892767b91be,"RM-018","Raw Material component type 018","RAW","PC",9.19,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+0f28c314-0a77-4de3-ba25-e684ed30e8b7,"RM-019","Raw Material component type 019","RAW","PC",6.16,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+84b2d926-58b1-47ff-9787-8d017aeb8c4f,"RM-020","Raw Material component type 020","RAW","PC",5.64,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+5d72a104-9856-4488-91f8-10646492e019,"RM-021","Raw Material component type 021","RAW","PC",16.80,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+6d740acd-13fc-472e-a64a-d6a5c6ea8e27,"RM-022","Raw Material component type 022","RAW","PC",2.24,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+adb6921c-5764-4581-9dbf-858144130aef,"RM-023","Raw Material component type 023","RAW","PC",4.45,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+b2d4050d-ffde-493c-bc73-b49623ada43e,"RM-024","Raw Material component type 024","RAW","PC",6.53,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+5d0ec00a-30fe-452d-a5f4-6f054b15d6d3,"RM-025","Raw Material component type 025","RAW","PC",20.19,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+5ebfd1c7-d647-47a3-97b9-bd4807d1d26a,"RM-026","Raw Material component type 026","RAW","PC",17.89,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+f15aff40-0082-46fa-b019-dffc1e732d0d,"RM-027","Raw Material component type 027","RAW","PC",12.61,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+280f2907-18ae-43eb-9826-914365227dea,"RM-028","Raw Material component type 028","RAW","PC",1.76,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+ea04e0cb-752a-4ccb-b82f-4137bc174e64,"RM-029","Raw Material component type 029","RAW","PC",16.35,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+6805e38e-7d20-425c-a4b4-3565cf9a18c2,"RM-030","Raw Material component type 030","RAW","PC",8.62,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+2281f351-cd8f-473c-8f50-2b435811ae2f,"RM-031","Raw Material component type 031","RAW","PC",21.41,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+6af06d84-2f5b-4af8-88bd-d7eee23c5be7,"RM-032","Raw Material component type 032","RAW","PC",5.08,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+f3f51244-db10-4326-a094-b3c375ef156a,"RM-033","Raw Material component type 033","RAW","PC",5.47,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+390702c5-69cf-4444-84ff-d2e538b59d0d,"RM-034","Raw Material component type 034","RAW","PC",3.37,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+3c86a85a-94de-4098-bfda-9258f7f49b9f,"RM-035","Raw Material component type 035","RAW","PC",14.20,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+315612eb-8fc3-491f-98e0-7855537dc88c,"RM-036","Raw Material component type 036","RAW","PC",7.81,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+fbbc2d89-10cb-406a-bf08-416e6b2946d7,"RM-037","Raw Material component type 037","RAW","PC",12.30,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+83a6a6ae-b238-4170-9580-0209964515ed,"RM-038","Raw Material component type 038","RAW","PC",6.90,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+5152eb0b-1fee-421e-bc7b-276fd5b8c1ae,"RM-039","Raw Material component type 039","RAW","PC",12.32,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+70d5e9b8-e745-4bd0-8934-12169c00bdf3,"RM-040","Raw Material component type 040","RAW","PC",20.16,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+a7fbdbfb-fe6e-4310-bc59-2d40d9f4661b,"RM-041","Raw Material component type 041","RAW","PC",19.63,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+43386a15-8a5f-488a-a909-89861c75021f,"RM-042","Raw Material component type 042","RAW","PC",7.27,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+4d10bda0-552e-4f4e-8a5b-7198a2785266,"RM-043","Raw Material component type 043","RAW","PC",2.53,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+18596400-18c5-4763-ba7d-aa9e334b3ccf,"RM-044","Raw Material component type 044","RAW","PC",16.92,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+d246a60f-df75-493c-b8aa-cdcb44d718f9,"RM-045","Raw Material component type 045","RAW","PC",16.45,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+a7e19f80-706e-46b5-9e7f-32fb5021e811,"RM-046","Raw Material component type 046","RAW","PC",14.45,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+67fee1d0-4130-4b11-bbb4-f76416b1f112,"RM-047","Raw Material component type 047","RAW","PC",3.68,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+2884d918-121b-486b-b962-e321da8b5ca8,"RM-048","Raw Material component type 048","RAW","PC",7.33,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+f70782ad-1e92-46bf-88a3-849332ae41ee,"RM-049","Raw Material component type 049","RAW","PC",3.08,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+5e206ec5-c1f6-4b4e-81fb-cbe2fddb48d8,"RM-050","Raw Material component type 050","RAW","PC",6.60,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+5e575b38-0503-426a-b0a8-cb8ca099d62b,"RM-051","Raw Material component type 051","RAW","PC",7.04,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+919bedf4-b37d-413d-a79f-249708398d30,"RM-052","Raw Material component type 052","RAW","PC",6.30,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+ba8b2fbe-cb35-482d-b8eb-271b47251991,"RM-053","Raw Material component type 053","RAW","PC",8.53,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+62f20501-2203-41bf-8247-338f13f992d3,"RM-054","Raw Material component type 054","RAW","PC",12.33,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+10780b9e-fe78-4661-baa6-9895efc80908,"RM-055","Raw Material component type 055","RAW","PC",2.66,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+98082e72-e39d-4b6b-bb6d-e6d1620fcfb0,"RM-056","Raw Material component type 056","RAW","PC",1.77,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+5b2b76d6-9cf1-4c59-9cf5-12b39ce3bd90,"RM-057","Raw Material component type 057","RAW","PC",6.48,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+e1eaf0fb-b563-46c4-ac50-f82d0a107ee1,"RM-058","Raw Material component type 058","RAW","PC",13.82,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+d4e38bd2-9819-4f80-9769-77317c5a6d1d,"RM-059","Raw Material component type 059","RAW","PC",1.97,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+10111df8-2eea-44b0-836f-f1b988c03c84,"RM-060","Raw Material component type 060","RAW","PC",7.58,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+3bdf2a0b-52d8-4ca2-ae6e-cd936672e494,"RM-061","Raw Material component type 061","RAW","PC",4.88,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+6d0cc955-63c8-4ca7-9331-97ccfc2d4fe6,"RM-062","Raw Material component type 062","RAW","PC",14.35,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+3668e33b-ac33-4238-9cb2-1d5252ca6695,"RM-063","Raw Material component type 063","RAW","PC",15.29,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+abd0cfd0-2f87-4c3c-8299-e37ce3fbb2b8,"RM-064","Raw Material component type 064","RAW","PC",13.04,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+c88de695-855d-42dc-b48e-03ef1f3c1666,"RM-065","Raw Material component type 065","RAW","PC",18.57,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+252bfd65-943e-4627-bc74-674fe4049dad,"RM-066","Raw Material component type 066","RAW","PC",13.46,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+8c5cefb9-bde4-4f29-bb73-9690102cf3a0,"RM-067","Raw Material component type 067","RAW","PC",2.44,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+4b6675e3-f69b-4f40-b4b2-501c460a7528,"RM-068","Raw Material component type 068","RAW","PC",17.27,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+c7e71e93-5771-43a2-83e7-be5c70e97a97,"RM-069","Raw Material component type 069","RAW","PC",16.18,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+95bc377f-5972-440a-98b8-555608b90cf4,"RM-070","Raw Material component type 070","RAW","PC",2.76,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+1bf01e9a-e152-4ce8-8b67-392c8ff16074,"FG-001","Finished Assembly Model 001","FINISHED","PC",427.44,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+d8d39e2e-714f-4013-8c9d-93c8f9e29985,"FG-002","Finished Assembly Model 002","FINISHED","PC",371.52,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+43b9b785-d79b-487a-8dca-8ffc64483061,"FG-003","Finished Assembly Model 003","FINISHED","PC",598.75,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+30031c76-55b0-4c92-97ea-5d9dab03573d,"FG-004","Finished Assembly Model 004","FINISHED","PC",459.25,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+8bfdf618-6540-4594-8612-c88412564b37,"FG-005","Finished Assembly Model 005","FINISHED","PC",467.80,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+1b72f798-3fc2-4714-96e3-625feb9d2265,"FG-006","Finished Assembly Model 006","FINISHED","PC",552.98,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+848c0f4a-ac2b-4c9e-8ddf-c687585bc985,"FG-007","Finished Assembly Model 007","FINISHED","PC",500.19,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+e46bd692-19d8-401b-9bd1-8704c6ef1c60,"FG-008","Finished Assembly Model 008","FINISHED","PC",467.29,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+07501c93-6a57-4005-8c22-214f47e13873,"FG-009","Finished Assembly Model 009","FINISHED","PC",256.12,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+5897090d-05ff-4159-b16a-11b452ea2add,"FG-010","Finished Assembly Model 010","FINISHED","PC",541.78,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+9feab2f2-972c-4d55-860c-8a95c1d3c99a,"FG-011","Finished Assembly Model 011","FINISHED","PC",463.57,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+605726d7-00c0-45d7-b8b0-6d742f2651ea,"FG-012","Finished Assembly Model 012","FINISHED","PC",416.33,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+b71facad-c8c0-454b-a090-b86cd39854c6,"FG-013","Finished Assembly Model 013","FINISHED","PC",408.06,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+432cf33a-512e-45fa-b0f5-032c60878cb7,"FG-014","Finished Assembly Model 014","FINISHED","PC",316.46,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+e13c96c0-365e-4cc6-9960-7bc1f9aa7d19,"FG-015","Finished Assembly Model 015","FINISHED","PC",307.20,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+bdfed8a0-476b-4d4b-ac95-98ef78a5b0ac,"FG-016","Finished Assembly Model 016","FINISHED","PC",466.75,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+0458e4c0-406b-4926-a3b1-b25aa0ec70d1,"FG-017","Finished Assembly Model 017","FINISHED","PC",289.83,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+1827b1ac-64cd-4332-9dad-841088982fa4,"FG-018","Finished Assembly Model 018","FINISHED","PC",484.96,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+433d7a82-4a04-4c5a-ae63-9d3d41f20ec8,"FG-019","Finished Assembly Model 019","FINISHED","PC",536.33,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+aae8b106-b1c2-4e7b-ab07-878b0c93f55c,"FG-020","Finished Assembly Model 020","FINISHED","PC",401.03,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+d7951592-edc6-46e6-9589-24f952f86c33,"FG-021","Finished Assembly Model 021","FINISHED","PC",570.60,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+2f34dea5-c93b-4805-aa99-e0f71da000a7,"FG-022","Finished Assembly Model 022","FINISHED","PC",648.57,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+92e1af9f-6dd7-4d88-8368-02597a4e81f7,"FG-023","Finished Assembly Model 023","FINISHED","PC",152.41,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+6def2f55-390d-47a4-bf81-555fca3f3f9b,"FG-024","Finished Assembly Model 024","FINISHED","PC",399.11,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+adde929a-1626-4c99-af99-5a86174cead6,"FG-025","Finished Assembly Model 025","FINISHED","PC",174.64,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+f1bd29dc-7d52-461e-ace7-b9d5b38f0bbf,"FG-026","Finished Assembly Model 026","FINISHED","PC",194.63,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+950cb66c-6a28-47a4-ab5f-9b254da4ab49,"FG-027","Finished Assembly Model 027","FINISHED","PC",608.18,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+df0198b4-4621-49df-bb34-6e2025afe689,"FG-028","Finished Assembly Model 028","FINISHED","PC",408.02,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+a400b4d0-1f44-4009-90de-9c926d051113,"FG-029","Finished Assembly Model 029","FINISHED","PC",159.89,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+00a68950-28da-4f7b-8671-7dc1e1eb230b,"FG-030","Finished Assembly Model 030","FINISHED","PC",402.36,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+13be9d10-24d0-4361-8e8f-1716a5539d9a,"FG-031","Finished Assembly Model 031","FINISHED","PC",593.21,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+5360fe38-99fa-48a4-ba6a-ecc96765434f,"FG-032","Finished Assembly Model 032","FINISHED","PC",185.55,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0
+20bfb30c-f5a5-4716-8cfb-fc9541932446,"FG-033","Finished Assembly Model 033","FINISHED","PC",215.85,"USD",true,9a600377-4b5d-4739-a90a-8ef135614126
+1fb9e3a8-5ef9-440f-bf14-42a0a0be9158,"FG-034","Finished Assembly Model 034","FINISHED","PC",258.37,"USD",true,3c30a61c-edbe-4452-8fec-53163b101db3
+c9f30fb9-7f91-4776-88c4-8496307ad650,"FG-035","Finished Assembly Model 035","FINISHED","PC",270.19,"USD",true,e6805119-7956-435d-9c48-9d2cf51f8da0

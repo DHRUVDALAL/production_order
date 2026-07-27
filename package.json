@@ -1,26 +1,55 @@
 {
-  "name": "prod_order",
+  "name": "order-management-portal",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
     "@sap/cds": "^10"
   },
   "devDependencies": {
-    "@cap-js/sqlite": "^3"
+    "@cap-js/sqlite": "^3",
+    "@playwright/test": "^1.61.1",
+    "@sap/cds-dk": "^10"
   },
   "scripts": {
-    "start": "cds-serve",
-    "deploy:sqlite": "cds deploy --to sqlite:db/po.db"
+    "start": "cds-serve"
   },
+  "private": true,
   "cds": {
     "requires": {
-      "db": {
-        "kind": "sqlite",
+      "db": "sqlite",
+      "ZAPI_PRODUCTION_ORDER_2_SRV": {
+        "kind": "odata-v2",
+        "model": "srv/external/ZAPI_PRODUCTION_ORDER_2_SRV",
         "credentials": {
-          "url": "db/po.db"
+          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_PRODUCTION_ORDER_2_SRV",
+          "authentication": "BasicAuthentication",
+          "username": "${SAP_USERNAME}",
+          "password": "${SAP_PASSWORD}"
+        }
+      },
+      "ZAPI_MATERIAL_DOCUMENT_SRV": {
+        "kind": "odata-v2",
+        "model": "srv/external/ZAPI_MATERIAL_DOCUMENT_SRV",
+        "credentials": {
+          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV",
+          "authentication": "BasicAuthentication",
+          "username": "${SAP_USERNAME}",
+          "password": "${SAP_PASSWORD}"
+        }
+      },
+      "API_PROD_ORDER_CONFIRMATION_2_SRV": {
+        "kind": "odata-v2",
+        "model": "srv/external/API_PROD_ORDER_CONFIRMATION_2_SRV",
+        "credentials": {
+          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_PROD_ORDER_CONFIRMATION_2_SRV",
+          "authentication": "BasicAuthentication",
+          "username": "${SAP_USERNAME}",
+          "password": "${SAP_PASSWORD}"
         }
       }
+    },
+    "cors": {
+      "origin": "*"
     }
-  },
-  "private": true
+  }
 }

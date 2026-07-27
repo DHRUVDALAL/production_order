@@ -1,10 +1,22 @@
 node_modules/
-
-# Local SQLite database and its sidecar files — re-created by `npm run deploy:sqlite`
-db/po.db
-db/po.db-shm
-db/po.db-wal
-
+target/
+_out/
 gen/
-*.log
+
+.cdsrc-private.json
+default-*.json
+*.sqlite
+
+# MTA
+mta_archives/
+*_mta_build_tmp
+*.mtar
+
+# Other
 .DS_Store
+
+# @cap-js/cds-typer
+@cds-models
+
+# Environment / credentials — NEVER commit
+.env

@@ -1,0 +1,8 @@
+ID,code,name,description
+8246abb3-538b-436d-b707-add4c9d340ad,"SYS_ADMIN","System Administrator","Full administrative access"
+a4e0c067-b81c-489c-a6a6-8da1a5bcba2d,"PROD_PLANNER","Production Planner","Manage orders, BOMs and routings"
+2e5e9a8f-4e75-426e-bda8-6484d106b0fc,"PROD_OPERATOR","Production Operator","Shop floor execution and confirmations"
+3102ca82-643a-495b-abd0-c328ac7048ad,"INV_MANAGER","Inventory Manager","Goods issue and goods receipt management"
+9ec757e2-ddfb-4c3f-a3f2-a379b75c25f1,"QUAL_INSPECTOR","Quality Inspector","Perform results recording and usage decisions"
+74a6d3d2-3c69-4bac-b71c-d2d4872b1916,"PLANT_SUPV","Plant Supervisor","Monitor production lines and override TECO/CLSD"
+897e4a47-6650-4f24-869d-42f16c1bae09,"PLANT_MGR","Plant Manager","Executive summary dashboards and trends"

@@ -1,0 +1,8 @@
+ID,username,passwordHash,email,name,department
+8d1d3708-4bca-41ba-8ace-3549b266006c,"admin","admin123","admin@manufacturing.com","Albin Smith","IT"
+461da141-1997-4470-9109-63dc3ab600fc,"planner1","planner123","planner1@manufacturing.com","Patricia Laine","Planning"
+683e2fc2-9192-4f92-8b2f-54c24ad91bb7,"operator1","operator123","operator1@manufacturing.com","John Doe","Shop Floor"
+e0dea57a-ae66-4322-972b-64879a991997,"inv_mgr1","inventory123","inv_mgr1@manufacturing.com","Sarah Connor","Logistics"
+c7cfd117-7eeb-4410-8384-638d472d2392,"inspector1","inspector123","inspector1@manufacturing.com","Michael Chang","Quality"
+f71c6343-5bdf-4d11-931a-15427b7c8184,"supervisor1","super123","supervisor1@manufacturing.com","Robert Vance","Operations"
+dbf1b7f8-03ae-4c95-8a60-b5928d438fee,"manager1","manager123","manager1@manufacturing.com","Jane Miller","Executive"

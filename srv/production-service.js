@@ -51,6 +51,256 @@ export default class ProductionService extends cds.ApplicationService {
         };
 
         // ----------------------------------------------------------------
+        // Helper: resolve or create a local Plant record by SAP plant code
+        // ----------------------------------------------------------------
+        const resolveOrCreatePlant = async (plantCode) => {
+            if (!plantCode) return null;
+            let plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: plantCode });
+            if (!plant) {
+                const { cuid } = await import('@sap/cds/common.js').catch(() => ({ cuid: () => cds.utils.uuid() }));
+                const newId = cds.utils.uuid();
+                await INSERT.into('sap.production.portal.Plants').entries({
+                    ID: newId, code: plantCode, name: `Plant ${plantCode}`, description: `SAP Plant ${plantCode}`, location: ''
+                });
+                plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: plantCode });
+            }
+            return plant;
+        };
+
+        // ----------------------------------------------------------------
+        // Helper: resolve or create a local Material record by SAP material code
+        // ----------------------------------------------------------------
+        const resolveOrCreateMaterial = async (materialCode, plantId) => {
+            if (!materialCode) return null;
+            let mat = await SELECT.one.from('sap.production.portal.Materials').where({ code: materialCode });
+            if (!mat) {
+                const newId = cds.utils.uuid();
+                await INSERT.into('sap.production.portal.Materials').entries({
+                    ID: newId, code: materialCode, description: materialCode,
+                    materialGroup: 'FINISHED', baseUnit: 'PC',
+                    standardPrice: 0, currency: 'INR', isActive: true,
+                    plant_ID: plantId || null
+                });
+                mat = await SELECT.one.from('sap.production.portal.Materials').where({ code: materialCode });
+            }
+            return mat;
+        };
+
+        // ----------------------------------------------------------------
+        // Helper: resolve or create a local StorageLocation by SAP sloc code
+        // ----------------------------------------------------------------
+        const resolveOrCreateSloc = async (slocCode, plantId) => {
+            if (!slocCode || !plantId) return null;
+            let sloc = await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: slocCode, plant_ID: plantId });
+            if (!sloc) {
+                const newId = cds.utils.uuid();
+                await INSERT.into('sap.production.portal.StorageLocations').entries({
+                    ID: newId, code: slocCode, name: `Storage ${slocCode}`, plant_ID: plantId
+                });
+                sloc = await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: slocCode, plant_ID: plantId });
+            }
+            return sloc;
+        };
+
+        // ----------------------------------------------------------------
+        // Helper: resolve or create a local WorkCenter by SAP code
+        // ----------------------------------------------------------------
+        const resolveOrCreateWorkCenter = async (wcCode, plantId) => {
+            if (!wcCode) return null;
+            let wc = await SELECT.one.from('sap.production.portal.WorkCenters').where({ code: wcCode });
+            if (!wc) {
+                const newId = cds.utils.uuid();
+                await INSERT.into('sap.production.portal.WorkCenters').entries({
+                    ID: newId, code: wcCode, name: wcCode,
+                    category: 'Machine', capacityQty: 8, capacityUnit: 'HR',
+                    costCenter: '', plant_ID: plantId || null
+                });
+                wc = await SELECT.one.from('sap.production.portal.WorkCenters').where({ code: wcCode });
+            }
+            return wc;
+        };
+
+        // ================================================================
+        // READ HANDLER: ProductionOrders
+        // Syncs live data from SAP → local DB before serving to frontend
+        // ================================================================
+        this.before('READ', 'ProductionOrders', async (req) => {
+            try {
+                console.log('[SAP SYNC] Fetching ProductionOrders from SAP...');
+                const sapOrders = await sapOrderSrv.run(
+                    SELECT.from(A_ProductionOrder_2).limit(200)
+                );
+
+                for (const sapOrder of (sapOrders || [])) {
+                    const plant   = await resolveOrCreatePlant(sapOrder.ProductionPlant);
+                    const plantId = plant?.ID || null;
+                    const mat     = await resolveOrCreateMaterial(sapOrder.Material, plantId);
+                    const sloc    = await resolveOrCreateSloc(sapOrder.StorageLocation, plantId);
+
+                    const existing = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                        .where({ orderNumber: sapOrder.ManufacturingOrder });
+
+                    const orderData = {
+                        orderNumber     : sapOrder.ManufacturingOrder,
+                        material_ID     : mat?.ID || null,
+                        plant_ID        : plantId,
+                        storageLocation_ID: sloc?.ID || null,
+                        targetQty       : parseFloat(sapOrder.MfgOrderPlannedTotalQty) || 0,
+                        confirmedQty    : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
+                        deliveredQty    : parseFloat(sapOrder.MfgOrderDeliveredQty) || 0,
+                        status          : mapSapStatus(sapOrder.ManufacturingOrderStatus),
+                        plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
+                        plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
+                        actualStartDate : sapOrder.MfgOrderActualStartDate  || null,
+                        actualEndDate   : sapOrder.MfgOrderActualEndDate    || null
+                    };
+
+                    if (existing) {
+                        await UPDATE('sap.production.portal.ProductionOrders')
+                            .set(orderData)
+                            .where({ ID: existing.ID });
+                    } else {
+                        await INSERT.into('sap.production.portal.ProductionOrders')
+                            .entries({ ID: cds.utils.uuid(), ...orderData });
+                    }
+
+                    // Sync Operations for this order
+                    try {
+                        const sapOps = await sapOrderSrv.run(
+                            SELECT.from(A_ProductionOrderOperation_2)
+                                  .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
+                        );
+                        const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                            .where({ orderNumber: sapOrder.ManufacturingOrder });
+
+                        for (const sapOp of (sapOps || [])) {
+                            const wc = await resolveOrCreateWorkCenter(sapOp.WorkCenter, plantId);
+                            const existingOp = await SELECT.one.from('sap.production.portal.OrderOperations')
+                                .where({ order_ID: localOrder.ID, sequence: parseInt(sapOp.ManufacturingOrderOperation) || 0 });
+
+                            const opData = {
+                                order_ID      : localOrder.ID,
+                                sequence      : parseInt(sapOp.ManufacturingOrderOperation) || 0,
+                                workCenter_ID : wc?.ID || null,
+                                description   : sapOp.OperationText || `Operation ${sapOp.ManufacturingOrderOperation}`,
+                                standardTime  : parseFloat(sapOp.StandardWorkQuantity1) || 0,
+                                timeUnit      : sapOp.StandardWorkQuantity1Unit || 'MIN',
+                                confirmedTime : parseFloat(sapOp.OpTotalConfirmedWorkQuantity) || 0,
+                                yieldQty      : parseFloat(sapOp.OpConfirmedYieldQuantity) || 0,
+                                scrapQty      : parseFloat(sapOp.OpConfirmedScrapQuantity) || 0,
+                                status        : mapSapStatus(sapOp.MfgOrderOperationStatus)
+                            };
+
+                            if (existingOp) {
+                                await UPDATE('sap.production.portal.OrderOperations').set(opData).where({ ID: existingOp.ID });
+                            } else {
+                                await INSERT.into('sap.production.portal.OrderOperations').entries({ ID: cds.utils.uuid(), ...opData });
+                            }
+                        }
+                    } catch (opErr) {
+                        console.warn(`[SAP SYNC] Could not sync operations for ${sapOrder.ManufacturingOrder}:`, opErr.message);
+                    }
+
+                    // Sync Components (BOM) for this order
+                    try {
+                        const sapComps = await sapOrderSrv.run(
+                            SELECT.from(A_ProductionOrderComponent_2)
+                                  .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
+                        );
+                        const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                            .where({ orderNumber: sapOrder.ManufacturingOrder });
+
+                        for (const sapComp of (sapComps || [])) {
+                            const compMat = await resolveOrCreateMaterial(sapComp.Material, plantId);
+                            const existingComp = await SELECT.one.from('sap.production.portal.OrderComponents')
+                                .where({ order_ID: localOrder.ID, componentMaterial_ID: compMat?.ID });
+
+                            const compData = {
+                                order_ID             : localOrder.ID,
+                                componentMaterial_ID : compMat?.ID || null,
+                                requiredQty          : parseFloat(sapComp.RequiredQuantity) || 0,
+                                issuedQty            : parseFloat(sapComp.WithdrawnQuantity) || 0,
+                                unit                 : sapComp.BaseUnit || 'PC',
+                                isBackflushed        : false,
+                                status               : sapComp.ComponentStatus || 'RESV'
+                            };
+
+                            if (existingComp) {
+                                await UPDATE('sap.production.portal.OrderComponents').set(compData).where({ ID: existingComp.ID });
+                            } else {
+                                await INSERT.into('sap.production.portal.OrderComponents').entries({ ID: cds.utils.uuid(), ...compData });
+                            }
+                        }
+                    } catch (compErr) {
+                        console.warn(`[SAP SYNC] Could not sync components for ${sapOrder.ManufacturingOrder}:`, compErr.message);
+                    }
+                }
+
+                console.log(`[SAP SYNC] ProductionOrders synced: ${(sapOrders || []).length} records`);
+            } catch (err) {
+                console.warn('[SAP SYNC] Could not sync ProductionOrders from SAP (running on local data):', err.message);
+            }
+        });
+
+        // ================================================================
+        // READ HANDLER: GoodsMovements
+        // Syncs live Material Documents from SAP → local DB
+        // ================================================================
+        this.before('READ', 'GoodsMovements', async (req) => {
+            try {
+                console.log('[SAP SYNC] Fetching GoodsMovements from SAP...');
+                const sapDocs = await sapMatDocSrv.run(
+                    SELECT.from(A_MaterialDocumentHeader).limit(500)
+                );
+
+                for (const doc of (sapDocs || [])) {
+                    // Fetch items for each document
+                    const sapItems = await sapMatDocSrv.run(
+                        SELECT.from(A_MaterialDocumentItem)
+                              .where({ MaterialDocument: doc.MaterialDocument, MaterialDocumentYear: doc.MaterialDocumentYear })
+                    );
+
+                    for (const item of (sapItems || [])) {
+                        const plant   = await resolveOrCreatePlant(item.Plant);
+                        const mat     = await resolveOrCreateMaterial(item.Material, plant?.ID);
+                        const sloc    = await resolveOrCreateSloc(item.StorageLocation, plant?.ID);
+
+                        // Match to local production order
+                        let localOrder = null;
+                        if (item.ManufacturingOrder) {
+                            localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                                .where({ orderNumber: item.ManufacturingOrder });
+                        }
+
+                        const mvtNum = `${doc.MaterialDocument}-${item.MaterialDocumentItem}`;
+                        const existing = await SELECT.one.from('sap.production.portal.GoodsMovements')
+                            .where({ movementNumber: mvtNum });
+
+                        const mvtData = {
+                            movementNumber    : mvtNum,
+                            order_ID          : localOrder?.ID || null,
+                            material_ID       : mat?.ID || null,
+                            plant_ID          : plant?.ID || null,
+                            storageLocation_ID: sloc?.ID || null,
+                            movementType      : item.GoodsMovementType || '101',
+                            quantity          : parseFloat(item.QuantityInBaseUnit) || 0,
+                            unit              : item.BaseUnit || 'PC',
+                            postingDate       : doc.PostingDate || new Date().toISOString().split('T')[0]
+                        };
+
+                        if (!existing) {
+                            await INSERT.into('sap.production.portal.GoodsMovements')
+                                .entries({ ID: cds.utils.uuid(), ...mvtData });
+                        }
+                    }
+                }
+                console.log(`[SAP SYNC] GoodsMovements synced: ${(sapDocs || []).length} documents`);
+            } catch (err) {
+                console.warn('[SAP SYNC] Could not sync GoodsMovements from SAP (running on local data):', err.message);
+            }
+        });
+
+        // ----------------------------------------------------------------
         // Helper: generate a Material Document via SAP
         // movementType: '101' = GR, '261' = GI, '350' = QM Block
         // ----------------------------------------------------------------

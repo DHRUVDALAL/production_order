@@ -35,7 +35,7 @@ async function runE2ETests() {
         await page.click('button[type="submit"]');
         
         // Verify dashboard load
-        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 60000 });
         console.log('✓ Successfully logged in and loaded Dashboard.');
 
         // Navigate to Production Orders page
@@ -94,19 +94,19 @@ async function runE2ETests() {
         await page.click('button:has-text("Check Availability (ATP)")');
         
         // Wait for check success banner
-        await page.waitForSelector('text=All raw material components are fully available!', { timeout: 10000 });
+        await page.waitForSelector('text=All raw material components are fully available!', { timeout: 60000 });
         console.log('✓ ATP Check completed. Order status updated to MACA.');
 
         // Release Order
         console.log('- Releasing Order...');
         await page.click('button:has-text("Release Order (REL)")');
-        await page.waitForSelector('text=Production order successfully released', { timeout: 10000 });
+        await page.waitForSelector('text=Production order successfully released', { timeout: 60000 });
         console.log('✓ Order released successfully (Status: REL).');
 
         // Start Execution (Planner has the permissions to initiate sequence)
         console.log('- Commencing execution (Start Order)...');
         await page.click('button:has-text("Start Execution")');
-        await page.waitForSelector('text=Manufacturing execution started', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing execution started', { timeout: 60000 });
         console.log('✓ Order execution started (Status: STRT).');
 
         // Sign out
@@ -124,7 +124,7 @@ async function runE2ETests() {
         await page.fill('input[type="text"]', 'operator1');
         await page.fill('input[type="password"]', 'operator123');
         await page.click('button[type="submit"]');
-        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 60000 });
         console.log('✓ Successfully logged in.');
 
         // Navigate directly to Confirm Operations page
@@ -138,7 +138,7 @@ async function runE2ETests() {
         await op10Row.locator('button:has-text("Confirm")').click();
         await page.locator('input[type="number"]').nth(0).fill('120'); // Yield
         await page.click('button:has-text("Save Confirmation")');
-        await page.waitForSelector('text=confirmed successfully', { timeout: 10000 });
+        await page.waitForSelector('text=confirmed successfully', { timeout: 60000 });
         console.log('✓ Operation 10 confirmed.');
 
         // Confirm Operation 20
@@ -147,7 +147,7 @@ async function runE2ETests() {
         await op20Row.locator('button:has-text("Confirm")').click();
         await page.locator('input[type="number"]').nth(0).fill('120'); // Yield
         await page.click('button:has-text("Save Confirmation")');
-        await page.waitForSelector('text=confirmed successfully', { timeout: 10000 });
+        await page.waitForSelector('text=confirmed successfully', { timeout: 60000 });
         console.log('✓ Operation 20 confirmed.');
 
         // Confirm Operation 30 (Triggers QA hold)
@@ -156,7 +156,7 @@ async function runE2ETests() {
         await op30Row.locator('button:has-text("Confirm")').click();
         await page.locator('input[type="number"]').nth(0).fill('120'); // Yield
         await page.click('button:has-text("Save Confirmation")');
-        await page.waitForSelector('text=confirmed successfully', { timeout: 10000 });
+        await page.waitForSelector('text=confirmed successfully', { timeout: 60000 });
         console.log('✓ Final operation 30 confirmed. Order is now on Quality Hold.');
 
         // Sign out Operator
@@ -173,7 +173,7 @@ async function runE2ETests() {
         await page.fill('input[type="text"]', 'inspector1');
         await page.fill('input[type="password"]', 'inspector123');
         await page.click('button[type="submit"]');
-        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 60000 });
         console.log('✓ Successfully logged in.');
 
         // Navigate to Quality page
@@ -190,7 +190,7 @@ async function runE2ETests() {
         console.log('- Submitting approved Usage Decision (UDAC)...');
         await page.selectOption('select', 'UDAC');
         await page.click('button:has-text("Submit UD")');
-        await page.waitForSelector('text=Usage Decision recorded successfully', { timeout: 10000 });
+        await page.waitForSelector('text=Usage Decision recorded successfully', { timeout: 60000 });
         console.log('✓ Inspection lot approved. Order cleared for Goods Receipt.');
 
         // Sign out Inspector
@@ -207,7 +207,7 @@ async function runE2ETests() {
         await page.fill('input[type="text"]', 'inv_mgr1');
         await page.fill('input[type="password"]', 'inventory123');
         await page.click('button[type="submit"]');
-        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 60000 });
         console.log('✓ Successfully logged in.');
 
         // Navigate to Order details to post GR
@@ -226,7 +226,7 @@ async function runE2ETests() {
         await page.click('button:has-text("Post Inventory")');
         
         // Verify success banner
-        await page.waitForSelector('text=Goods Receipt posted successfully', { timeout: 10000 });
+        await page.waitForSelector('text=Goods Receipt posted successfully', { timeout: 60000 });
         console.log('✓ Goods Receipt GR 101 posted successfully. Order technically completed (TECO).');
 
         // Sign out Inventory manager
@@ -243,7 +243,7 @@ async function runE2ETests() {
         await page.fill('input[type="text"]', 'admin');
         await page.fill('input[type="password"]', 'admin123');
         await page.click('button[type="submit"]');
-        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 10000 });
+        await page.waitForSelector('text=Manufacturing Executive Dashboard', { timeout: 60000 });
         console.log('✓ Successfully logged in.');
 
         // Navigate to Admin

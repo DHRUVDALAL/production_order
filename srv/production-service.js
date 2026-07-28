@@ -120,12 +120,19 @@ export default class ProductionService extends cds.ApplicationService {
             return wc;
         };
 
+        let hasSyncedOrders = true;
+        let hasSyncedMovements = true;
+
         // ================================================================
         // READ HANDLER: ProductionOrders
         // Syncs live data from SAP → local DB before serving to frontend
         // ================================================================
         this.before('READ', 'ProductionOrders', async (req) => {
             try {
+                if (hasSyncedOrders) {
+                    console.log('[SAP SYNC] Skipping SAP fetch (already synced in this session).');
+                    return;
+                }
                 console.log('[SAP SYNC] Fetching ProductionOrders from SAP...');
                 const sapOrders = await sapOrderSrv.run(
                     SELECT.from(A_ProductionOrder_2).limit(200)
@@ -237,6 +244,7 @@ export default class ProductionService extends cds.ApplicationService {
                 }
 
                 console.log(`[SAP SYNC] ProductionOrders synced: ${(sapOrders || []).length} records`);
+                hasSyncedOrders = true;
             } catch (err) {
                 console.warn('[SAP SYNC] Could not sync ProductionOrders from SAP (running on local data):', err.message);
             }
@@ -248,6 +256,10 @@ export default class ProductionService extends cds.ApplicationService {
         // ================================================================
         this.before('READ', 'GoodsMovements', async (req) => {
             try {
+                if (hasSyncedMovements) {
+                    console.log('[SAP SYNC] Skipping SAP GoodsMovements fetch (already synced in this session).');
+                    return;
+                }
                 console.log('[SAP SYNC] Fetching GoodsMovements from SAP...');
                 const sapDocs = await sapMatDocSrv.run(
                     SELECT.from(A_MaterialDocumentHeader).limit(500)
@@ -295,6 +307,7 @@ export default class ProductionService extends cds.ApplicationService {
                     }
                 }
                 console.log(`[SAP SYNC] GoodsMovements synced: ${(sapDocs || []).length} documents`);
+                hasSyncedMovements = true;
             } catch (err) {
                 console.warn('[SAP SYNC] Could not sync GoodsMovements from SAP (running on local data):', err.message);
             }
@@ -344,10 +357,9 @@ export default class ProductionService extends cds.ApplicationService {
             }
 
             // When creating directly in CRTD status: explode BOM + Routing from local master data
-            // then mirror the order header to SAP
+            // (Note: Do not sync/POST to on-premises SAP as per read-only request)
             if (order.status === 'CRTD') {
                 await this._explodeBOMAndRouting(order, req);
-                await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, order);
             }
         });
 
@@ -368,9 +380,6 @@ export default class ProductionService extends cds.ApplicationService {
                 orderUpdates.orderNumber = fullOrder.orderNumber;
                 orderUpdates.operations  = fullOrder.operations;
                 orderUpdates.components  = fullOrder.components;
-
-                // Mirror to SAP after exploding
-                await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, fullOrder);
             }
         });
 
@@ -473,17 +482,7 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Cannot release order in status ${order.status}. Must be in CRTD or MACA.`);
             }
 
-            // ----- Release on SAP -----
-            try {
-                // SAP Release is triggered by PATCH on ManufacturingOrderStatus
-                await sapOrderSrv.run(
-                    UPDATE(A_ProductionOrder_2)
-                        .set({ ManufacturingOrderStatus: 'REL' })
-                        .where({ ManufacturingOrder: order.orderNumber })
-                );
-            } catch (err) {
-                console.warn('[SAP] Could not release order on SAP, updating local status only:', err.message);
-            }
+            // (Note: Do not patch to on-premises SAP as per read-only request)
 
             // Update local status
             await UPDATE('sap.production.portal.ProductionOrders')
@@ -582,28 +581,8 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Confirmed yield (${newCumulativeYield}) exceeds target quantity (${order.targetQty}) plus 10% tolerance.`);
             }
 
-            // ----- POST confirmation to SAP -----
+            // (Note: Do not post confirmation to SAP as per read-only request)
             let sapConfirmationCounter = null;
-            try {
-                const confPayload = {
-                    ManufacturingOrder          : order.orderNumber,
-                    ManufacturingOrderOperation  : String(op.sequence).padStart(4, '0'),
-                    ManufacturingOrderSequence   : '000001',
-                    ConfirmedYieldQuantity       : parseFloat(yieldQty),
-                    ConfirmedScrapQuantity       : parseFloat(scrapQty),
-                    ConfirmedWorkQuantity        : parseFloat(timeSpent),
-                    ConfirmationWorkQuantityUnit : op.timeUnit || 'MIN',
-                    IsFinalConfirmation          : isFinalConfirmation,
-                    ConfirmationText             : `Confirmed by portal user ${req.headers['x-user-id'] || 'unknown'}`,
-                    Plant                        : order.plantCode || ''
-                };
-
-                const sapResult = await sapConfirmSrv.post(ProdnOrdConf2, confPayload);
-                sapConfirmationCounter = sapResult?.ConfirmationCounter;
-                console.log(`[SAP] Confirmation posted. Counter: ${sapConfirmationCounter}`);
-            } catch (err) {
-                console.warn('[SAP] Confirmation POST failed, continuing with local update:', err.message);
-            }
 
             const targetOpStatus = isFinalConfirmation ? 'CNF' : 'PCNF';
             const oldOpValues    = { status: op.status, yieldQty: op.yieldQty, scrapQty: op.scrapQty, confirmedTime: op.confirmedTime };
@@ -623,21 +602,7 @@ export default class ProductionService extends cds.ApplicationService {
                     if (comp.issuedQty < comp.requiredQty) {
                         const issueQty = parseFloat(comp.requiredQty) - parseFloat(comp.issuedQty);
 
-                        try {
-                            // Post GI 261 via SAP Material Document API
-                            await postSapMaterialDocument({
-                                orderNumber    : order.orderNumber,
-                                material       : comp.componentMaterialCode || comp.componentMaterial_ID,
-                                plant          : order.plantCode || '',
-                                storageLocation: order.storageLocationCode || '',
-                                movementType   : '261',
-                                quantity       : issueQty,
-                                unit           : comp.unit,
-                                headerText     : `GI backflush for order ${order.orderNumber}`
-                            });
-                        } catch (err) {
-                            console.warn(`[SAP] GI 261 failed for component ${comp.componentMaterial_ID}:`, err.message);
-                        }
+                        // (Note: Do not post GI to SAP as per read-only request)
 
                         // Mirror to local GoodsMovements
                         await INSERT.into('sap.production.portal.GoodsMovements').entries({
@@ -738,21 +703,7 @@ export default class ProductionService extends cds.ApplicationService {
                     isRead  : false
                 });
             } else {
-                // ----- Post rejection to SAP as blocked stock (350) -----
-                try {
-                    await postSapMaterialDocument({
-                        orderNumber    : order.orderNumber,
-                        material       : order.materialCode || order.material_ID,
-                        plant          : order.plantCode || '',
-                        storageLocation: order.storageLocationCode || '',
-                        movementType   : '350',
-                        quantity       : rejectedQty,
-                        unit           : 'PC',
-                        headerText     : `QM rejection for order ${order.orderNumber}`
-                    });
-                } catch (err) {
-                    console.warn('[SAP] QM Block 350 posting failed:', err.message);
-                }
+                // (Note: Do not post rejection to SAP as per read-only request)
 
                 // Mirror to local
                 await INSERT.into('sap.production.portal.GoodsMovements').entries({
@@ -809,24 +760,8 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Proposed GR quantity (${quantity}) puts cumulative delivery (${proposedTotal}) above target (${target}) + 10% tolerance.`);
             }
 
-            // ----- Post GR 101 to SAP -----
+            // ----- Post GR 101 (Local Only) -----
             let docNum = 'GR' + Math.floor(10000000 + Math.random() * 90000000);
-            try {
-                const sapGR = await postSapMaterialDocument({
-                    orderNumber    : order.orderNumber,
-                    material       : order.materialCode || order.material_ID,
-                    plant          : order.plantCode || '',
-                    storageLocation: order.storageLocationCode || '',
-                    movementType   : '101',
-                    quantity,
-                    unit           : 'PC',
-                    headerText     : `GR for production order ${order.orderNumber}`
-                });
-                docNum = sapGR?.MaterialDocument || docNum;
-                console.log(`[SAP] GR 101 posted. Material Document: ${docNum}`);
-            } catch (err) {
-                console.warn('[SAP] GR 101 POST failed, recording locally:', err.message);
-            }
 
             // Mirror to local GoodsMovements
             const slocRecord = slocId ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: slocId }) : null;

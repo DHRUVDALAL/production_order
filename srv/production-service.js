@@ -120,8 +120,8 @@ export default class ProductionService extends cds.ApplicationService {
             return wc;
         };
 
-        let hasSyncedOrders = true;
-        let hasSyncedMovements = true;
+        let hasSyncedOrders = false;
+        let hasSyncedMovements = false;
 
         // ================================================================
         // READ HANDLER: ProductionOrders

@@ -17,6 +17,8 @@ export const Operations: React.FC = () => {
   const [scrapQty, setScrapQty] = useState('0');
   const [timeSpent, setTimeSpent] = useState('30');
   const [isFinal, setIsFinal] = useState(true);
+  // A confirmation posts financially, so it has to land in an open SAP period.
+  const [postingDate, setPostingDate] = useState(new Date().toISOString().split('T')[0]);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -24,7 +26,7 @@ export const Operations: React.FC = () => {
   const { data: activeOrders, isLoading } = useQuery({
     queryKey: ['activeOrdersList'],
     queryFn: async () => {
-      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'STRT' or status eq 'PCNF'&$expand=material,operations($orderby=sequence asc)");
+      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'STRT' or status eq 'PCNF'&$expand=material,operations($orderby=sequence asc;$expand=workCenter)");
       return res.data?.value || [];
     }
   });
@@ -32,7 +34,8 @@ export const Operations: React.FC = () => {
   const confirmOpMutation = useMutation({
     mutationFn: async (confirmPayload: any) => {
       const res = await api.post('/odata/v4/production/confirmOperation', confirmPayload);
-      return res.data?.value;
+      // OData v4 action results are flat — `value` only wraps collections.
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['activeOrdersList'] });
@@ -52,9 +55,9 @@ export const Operations: React.FC = () => {
   const handleOpenConfirmDialog = (order: any, op: any) => {
     setSelectedOrder(order);
     setSelectedOp(op);
-    setYieldQty(order.targetQty.toString());
+    setYieldQty(String(order.targetQty ?? 0));
     setScrapQty('0');
-    setTimeSpent(op.standardTime.toString());
+    setTimeSpent(String(op.standardTime ?? 0));
     setIsFinal(true);
     setErrorMsg('');
     setSuccessMsg('');
@@ -70,13 +73,19 @@ export const Operations: React.FC = () => {
       return;
     }
 
+    if (!postingDate) {
+      setErrorMsg('A posting date is required.');
+      return;
+    }
+
     confirmOpMutation.mutate({
       orderId: selectedOrder.ID,
       operationId: selectedOp.ID,
       yieldQty: parseFloat(yieldQty),
       scrapQty: parseFloat(scrapQty),
       timeSpent: parseFloat(timeSpent),
-      isFinalConfirmation: isFinal
+      isFinalConfirmation: isFinal,
+      postingDate
     });
   };
 
@@ -132,6 +141,14 @@ export const Operations: React.FC = () => {
             <div className="sap-form-group">
               <label className="sap-label">Labor/Machine Time Spent (Min) *</label>
               <input type="number" className="sap-input" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} min="0" required />
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Posting Date *</label>
+              <input type="date" className="sap-input" value={postingDate} onChange={e => setPostingDate(e.target.value)} required />
+              <span style={{ fontSize: '0.72rem', color: '#6a7b8c', marginTop: '0.25rem' }}>
+                Must fall in an open SAP posting period.
+              </span>
             </div>
 
             <div className="sap-form-group">
@@ -199,7 +216,9 @@ export const Operations: React.FC = () => {
                         <tr key={op.ID}>
                           <td>{op.sequence}</td>
                           <td style={{ fontWeight: 500 }}>{op.description}</td>
-                          <td>Work Center {op.workCenter_ID.slice(0,8)}</td>
+                          {/* SAP operations can carry no work centre, so
+                              workCenter_ID is legitimately null here. */}
+                          <td>{op.workCenter?.code || op.workCenter?.name || '—'}</td>
                           <td>{parseFloat(op.standardTime).toFixed(0)} MIN</td>
                           <td>{parseFloat(op.confirmedTime).toFixed(0)} MIN</td>
                           <td>{parseFloat(op.yieldQty).toFixed(0)} PC</td>

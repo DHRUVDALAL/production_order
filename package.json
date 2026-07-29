@@ -21,31 +21,32 @@
         "kind": "odata-v2",
         "model": "srv/external/ZAPI_PRODUCTION_ORDER_2_SRV",
         "credentials": {
-          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_PRODUCTION_ORDER_2_SRV",
-          "authentication": "BasicAuthentication",
-          "username": "${SAP_USERNAME}",
-          "password": "${SAP_PASSWORD}"
-        }
+          "url": "https://my421238-api.s4hana.cloud.sap/sap/opu/odata/sap/API_PRODUCTION_ORDER_2_SRV",
+          "authentication": "BasicAuthentication"
+        },
+        "csrf": true,
+        "csrfInBatch": true,
+        "orderType": "ZPPS"
       },
       "ZAPI_MATERIAL_DOCUMENT_SRV": {
         "kind": "odata-v2",
         "model": "srv/external/ZAPI_MATERIAL_DOCUMENT_SRV",
         "credentials": {
-          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV",
-          "authentication": "BasicAuthentication",
-          "username": "${SAP_USERNAME}",
-          "password": "${SAP_PASSWORD}"
-        }
+          "url": "https://my421238-api.s4hana.cloud.sap/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV",
+          "authentication": "BasicAuthentication"
+        },
+        "csrf": true,
+        "csrfInBatch": true
       },
       "API_PROD_ORDER_CONFIRMATION_2_SRV": {
         "kind": "odata-v2",
         "model": "srv/external/API_PROD_ORDER_CONFIRMATION_2_SRV",
         "credentials": {
-          "url": "http://192.168.1.55:8000/sap/opu/odata/sap/API_PROD_ORDER_CONFIRMATION_2_SRV",
-          "authentication": "BasicAuthentication",
-          "username": "${SAP_USERNAME}",
-          "password": "${SAP_PASSWORD}"
-        }
+          "url": "https://my421238-api.s4hana.cloud.sap/sap/opu/odata/sap/API_PROD_ORDER_CONFIRMATION_2_SRV",
+          "authentication": "BasicAuthentication"
+        },
+        "csrf": true,
+        "csrfInBatch": true
       }
     },
     "cors": {

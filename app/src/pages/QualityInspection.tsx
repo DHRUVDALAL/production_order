@@ -27,7 +27,8 @@ export const QualityInspection: React.FC = () => {
   const submitDecisionMutation = useMutation({
     mutationFn: async (decisionPayload: any) => {
       const res = await api.post('/odata/v4/production/submitUsageDecision', decisionPayload);
-      return res.data?.value;
+      // OData v4 action results are flat — `value` only wraps collections.
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inspectionLotsList'] });

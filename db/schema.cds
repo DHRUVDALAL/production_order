@@ -6,17 +6,22 @@ using { cuid, managed } from '@sap/cds/common';
 // MASTER DATA ENTITIES
 // -------------------------------------------------------------
 
+// isSapSynced marks master data that came from the live S/4HANA tenant, as
+// opposed to the locally seeded demo rows. Transactional screens filter on it
+// so users cannot pick mock master data that SAP would reject.
 entity Plants : cuid, managed {
     code        : String(4); // e.g. "PL01", "PL02"
     name        : String(100);
     description : String(255);
     location    : String(100);
+    isSapSynced : Boolean default false;
     storageLocations : Association to many StorageLocations on storageLocations.plant = $self;
 }
 
 entity StorageLocations : cuid, managed {
     code        : String(4); // e.g. "SL01", "SL02"
     name        : String(100);
+    isSapSynced : Boolean default false;
     plant       : Association to Plants;
 }
 
@@ -28,6 +33,7 @@ entity Materials : cuid, managed {
     standardPrice: Decimal(15, 2);
     currency     : String(3) default 'USD';
     isActive     : Boolean default true;
+    isSapSynced  : Boolean default false;
     plant        : Association to Plants;
 }
 

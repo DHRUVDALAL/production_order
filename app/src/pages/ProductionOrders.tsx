@@ -30,10 +30,13 @@ export const ProductionOrders: React.FC = () => {
     }
   });
 
+  // Master data pickers are restricted to isSapSynced rows. Locally seeded
+  // demo master data does not exist in S/4HANA, so choosing it makes the
+  // create call fail server-side ("Material X not maintained in plant Y").
   const { data: finishedMaterials } = useQuery({
     queryKey: ['finishedMaterials'],
     queryFn: async () => {
-      const res = await api.get("/odata/v4/production/Materials?$filter=materialGroup eq 'FINISHED'");
+      const res = await api.get("/odata/v4/production/Materials?$filter=materialGroup eq 'FINISHED' and isSapSynced eq true&$orderby=code");
       return res.data?.value || [];
     }
   });
@@ -41,7 +44,7 @@ export const ProductionOrders: React.FC = () => {
   const { data: plants } = useQuery({
     queryKey: ['plantsList'],
     queryFn: async () => {
-      const res = await api.get('/odata/v4/production/Plants');
+      const res = await api.get('/odata/v4/production/Plants?$filter=isSapSynced eq true&$orderby=code');
       return res.data?.value || [];
     }
   });
@@ -49,7 +52,7 @@ export const ProductionOrders: React.FC = () => {
   const { data: slocs } = useQuery({
     queryKey: ['slocsList'],
     queryFn: async () => {
-      const res = await api.get('/odata/v4/production/StorageLocations');
+      const res = await api.get('/odata/v4/production/StorageLocations?$filter=isSapSynced eq true&$orderby=code');
       return res.data?.value || [];
     }
   });

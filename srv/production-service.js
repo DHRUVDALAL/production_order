@@ -37,19 +37,36 @@ export default class ProductionService extends cds.ApplicationService {
         } = sapConfirmSrv.entities;
 
         // ----------------------------------------------------------------
-        // Helper: map SAP status codes → local portal status codes
+        // Helper: derive a portal status from the Public Cloud order header
+        // flags. S/4HANA Public Cloud exposes no ManufacturingOrderStatus
+        // field — status is a set of 'X'/'' indicators. Most-advanced wins.
         // ----------------------------------------------------------------
-        const mapSapStatus = (sapStatus = '') => {
-            const s = sapStatus.toUpperCase().trim();
-            if (s.includes('REL'))   return 'REL';
-            if (s.includes('PCNF'))  return 'PCNF';
-            if (s.includes('CNF'))   return 'CNF';
-            if (s.includes('DLV'))   return 'GR';
-            if (s.includes('PDLV'))  return 'GR';
-            if (s.includes('GMPS'))  return 'GI';
-            if (s.includes('TECO'))  return 'TECO';
-            if (s.includes('CRTD'))  return 'CRTD';
+        const isSet = (flag) => String(flag || '').trim().toUpperCase() === 'X';
+
+        const deriveOrderStatus = (o = {}) => {
+            if (isSet(o.OrderIsClosed))                 return 'CLSD';
+            if (isSet(o.OrderIsTechnicallyCompleted))   return 'TECO';
+            if (isSet(o.OrderIsConfirmed))              return 'CNF';
+            if (isSet(o.OrderIsPartiallyConfirmed))     return 'PCNF';
+            if (isSet(o.OrderIsReleased))               return 'REL';
             return 'CRTD';
+        };
+
+        // Operations expose only two confirmation flags, no status code.
+        const deriveOperationStatus = (op = {}, orderStatus = 'CRTD') => {
+            if (isSet(op.OperationIsConfirmed))          return 'CNF';
+            if (isSet(op.OperationIsPartiallyConfirmed)) return 'PCNF';
+            return orderStatus === 'CRTD' ? 'CRTD' : 'REL';
+        };
+
+        // Components expose no status code — derive from withdrawn vs required.
+        const deriveComponentStatus = (comp = {}) => {
+            const required  = parseFloat(comp.RequiredQuantity)  || 0;
+            const withdrawn = parseFloat(comp.WithdrawnQuantity) || 0;
+            if (isSet(comp.ReservationIsFinallyIssued)) return 'ISSD';
+            if (withdrawn <= 0)                         return 'RESV';
+            if (withdrawn >= required)                  return 'ISSD';
+            return 'MSPT';
         };
 
         // ----------------------------------------------------------------
@@ -59,12 +76,16 @@ export default class ProductionService extends cds.ApplicationService {
             if (!plantCode) return null;
             let plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: plantCode });
             if (!plant) {
-                const { cuid } = await import('@sap/cds/common.js').catch(() => ({ cuid: () => cds.utils.uuid() }));
                 const newId = cds.utils.uuid();
                 await INSERT.into('sap.production.portal.Plants').entries({
-                    ID: newId, code: plantCode, name: `Plant ${plantCode}`, description: `SAP Plant ${plantCode}`, location: ''
+                    ID: newId, code: plantCode, name: `Plant ${plantCode}`,
+                    description: `SAP Plant ${plantCode}`, location: '', isSapSynced: true
                 });
                 plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: plantCode });
+            } else if (!plant.isSapSynced) {
+                // A seeded row whose code also exists in SAP is real after all.
+                await UPDATE('sap.production.portal.Plants').set({ isSapSynced: true }).where({ ID: plant.ID });
+                plant.isSapSynced = true;
             }
             return plant;
         };
@@ -72,18 +93,31 @@ export default class ProductionService extends cds.ApplicationService {
         // ----------------------------------------------------------------
         // Helper: resolve or create a local Material record by SAP material code
         // ----------------------------------------------------------------
-        const resolveOrCreateMaterial = async (materialCode, plantId) => {
+        // materialGroup defaults to COMPONENT: only the header material of a
+        // production order is a finished good. Marking every synced material
+        // FINISHED would fill the create-order picker with raw components.
+        const resolveOrCreateMaterial = async (materialCode, plantId, materialGroup = 'COMPONENT') => {
             if (!materialCode) return null;
             let mat = await SELECT.one.from('sap.production.portal.Materials').where({ code: materialCode });
             if (!mat) {
                 const newId = cds.utils.uuid();
                 await INSERT.into('sap.production.portal.Materials').entries({
                     ID: newId, code: materialCode, description: materialCode,
-                    materialGroup: 'FINISHED', baseUnit: 'PC',
+                    materialGroup, baseUnit: 'PC',
                     standardPrice: 0, currency: 'INR', isActive: true,
-                    plant_ID: plantId || null
+                    isSapSynced: true, plant_ID: plantId || null
                 });
                 mat = await SELECT.one.from('sap.production.portal.Materials').where({ code: materialCode });
+            } else {
+                // A material first seen as a component can later turn up as an
+                // order header material — promote it, never demote.
+                const promote = materialGroup === 'FINISHED' && mat.materialGroup !== 'FINISHED';
+                if (promote || !mat.isSapSynced) {
+                    const patch = { isSapSynced: true };
+                    if (promote) patch.materialGroup = 'FINISHED';
+                    await UPDATE('sap.production.portal.Materials').set(patch).where({ ID: mat.ID });
+                    Object.assign(mat, patch);
+                }
             }
             return mat;
         };
@@ -97,9 +131,13 @@ export default class ProductionService extends cds.ApplicationService {
             if (!sloc) {
                 const newId = cds.utils.uuid();
                 await INSERT.into('sap.production.portal.StorageLocations').entries({
-                    ID: newId, code: slocCode, name: `Storage ${slocCode}`, plant_ID: plantId
+                    ID: newId, code: slocCode, name: `Storage ${slocCode}`,
+                    plant_ID: plantId, isSapSynced: true
                 });
                 sloc = await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: slocCode, plant_ID: plantId });
+            } else if (!sloc.isSapSynced) {
+                await UPDATE('sap.production.portal.StorageLocations').set({ isSapSynced: true }).where({ ID: sloc.ID });
+                sloc.isSapSynced = true;
             }
             return sloc;
         };
@@ -120,6 +158,52 @@ export default class ProductionService extends cds.ApplicationService {
                 wc = await SELECT.one.from('sap.production.portal.WorkCenters').where({ code: wcCode });
             }
             return wc;
+        };
+
+        // ----------------------------------------------------------------
+        // Helper: adopt the operations and components S/4 generated for a
+        // freshly created order. SAP explodes the real BOM and routing
+        // itself, so the portal takes its structure from there instead of
+        // guessing from local master data.
+        // ----------------------------------------------------------------
+        const adoptSapOrderStructure = async (orderNumber, plantId) => {
+            const [sapOps, sapComps] = await Promise.all([
+                sapOrderSrv.run(SELECT.from(A_ProductionOrderOperation_2)
+                    .where({ ManufacturingOrder: orderNumber })),
+                sapOrderSrv.run(SELECT.from(A_ProductionOrderComponent_2)
+                    .where({ ManufacturingOrder: orderNumber }))
+            ]);
+
+            const operations = [];
+            for (const op of (sapOps || [])) {
+                const wc = await resolveOrCreateWorkCenter(op.WorkCenter, plantId);
+                operations.push({
+                    sequence     : parseInt(op.ManufacturingOrderOperation) || 0,
+                    workCenter_ID: wc?.ID || null,
+                    description  : op.MfgOrderOperationText || `Operation ${op.ManufacturingOrderOperation}`,
+                    standardTime : parseFloat(op.WorkCenterStandardWorkQty1) || 0,
+                    timeUnit     : op.WorkCenterStandardWorkQtyUnit1 || 'MIN',
+                    confirmedTime: 0,
+                    yieldQty     : parseFloat(op.OpTotalConfirmedYieldQty) || 0,
+                    scrapQty     : 0,
+                    status       : deriveOperationStatus(op, 'CRTD')
+                });
+            }
+
+            const components = [];
+            for (const comp of (sapComps || [])) {
+                const mat = await resolveOrCreateMaterial(comp.Material, plantId);
+                components.push({
+                    componentMaterial_ID: mat?.ID || null,
+                    requiredQty         : parseFloat(comp.RequiredQuantity) || 0,
+                    issuedQty           : parseFloat(comp.WithdrawnQuantity) || 0,
+                    unit                : comp.BaseUnit || 'PC',
+                    isBackflushed       : !!comp.MatlCompIsMarkedForBackflush,
+                    status              : deriveComponentStatus(comp)
+                });
+            }
+
+            return { operations, components };
         };
 
         let hasSyncedOrders = false;
@@ -143,25 +227,27 @@ export default class ProductionService extends cds.ApplicationService {
                 for (const sapOrder of (sapOrders || [])) {
                     const plant   = await resolveOrCreatePlant(sapOrder.ProductionPlant);
                     const plantId = plant?.ID || null;
-                    const mat     = await resolveOrCreateMaterial(sapOrder.Material, plantId);
+                    // The order header material is by definition a finished good.
+                    const mat     = await resolveOrCreateMaterial(sapOrder.Material, plantId, 'FINISHED');
                     const sloc    = await resolveOrCreateSloc(sapOrder.StorageLocation, plantId);
 
                     const existing = await SELECT.one.from('sap.production.portal.ProductionOrders')
                         .where({ orderNumber: sapOrder.ManufacturingOrder });
 
+                    // Public Cloud has no delivered-qty or actual start/end
+                    // date on the header, so those local fields are left alone.
+                    const sapOrderStatus = deriveOrderStatus(sapOrder);
                     const orderData = {
                         orderNumber     : sapOrder.ManufacturingOrder,
                         material_ID     : mat?.ID || null,
                         plant_ID        : plantId,
                         storageLocation_ID: sloc?.ID || null,
-                        targetQty       : parseFloat(sapOrder.MfgOrderPlannedTotalQty) || 0,
+                        targetQty       : parseFloat(sapOrder.TotalQuantity) || 0,
                         confirmedQty    : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
-                        deliveredQty    : parseFloat(sapOrder.MfgOrderDeliveredQty) || 0,
-                        status          : mapSapStatus(sapOrder.ManufacturingOrderStatus),
+                        status          : sapOrderStatus,
                         plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                         plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
-                        actualStartDate : sapOrder.MfgOrderActualStartDate  || null,
-                        actualEndDate   : sapOrder.MfgOrderActualEndDate    || null
+                        actualStartDate : sapOrder.MfgOrderActualReleaseDate || null
                     };
 
                     if (existing) {
@@ -187,17 +273,18 @@ export default class ProductionService extends cds.ApplicationService {
                             const existingOp = await SELECT.one.from('sap.production.portal.OrderOperations')
                                 .where({ order_ID: localOrder.ID, sequence: parseInt(sapOp.ManufacturingOrderOperation) || 0 });
 
+                            // Public Cloud operations carry no confirmed work
+                            // time or scrap quantity — those live on the
+                            // confirmation records, so local values are kept.
                             const opData = {
                                 order_ID      : localOrder.ID,
                                 sequence      : parseInt(sapOp.ManufacturingOrderOperation) || 0,
                                 workCenter_ID : wc?.ID || null,
-                                description   : sapOp.OperationText || `Operation ${sapOp.ManufacturingOrderOperation}`,
-                                standardTime  : parseFloat(sapOp.StandardWorkQuantity1) || 0,
-                                timeUnit      : sapOp.StandardWorkQuantity1Unit || 'MIN',
-                                confirmedTime : parseFloat(sapOp.OpTotalConfirmedWorkQuantity) || 0,
-                                yieldQty      : parseFloat(sapOp.OpConfirmedYieldQuantity) || 0,
-                                scrapQty      : parseFloat(sapOp.OpConfirmedScrapQuantity) || 0,
-                                status        : mapSapStatus(sapOp.MfgOrderOperationStatus)
+                                description   : sapOp.MfgOrderOperationText || `Operation ${sapOp.ManufacturingOrderOperation}`,
+                                standardTime  : parseFloat(sapOp.WorkCenterStandardWorkQty1) || 0,
+                                timeUnit      : sapOp.WorkCenterStandardWorkQtyUnit1 || 'MIN',
+                                yieldQty      : parseFloat(sapOp.OpTotalConfirmedYieldQty) || 0,
+                                status        : deriveOperationStatus(sapOp, sapOrderStatus)
                             };
 
                             if (existingOp) {
@@ -221,6 +308,9 @@ export default class ProductionService extends cds.ApplicationService {
 
                         for (const sapComp of (sapComps || [])) {
                             const compMat = await resolveOrCreateMaterial(sapComp.Material, plantId);
+                            // Register the component's storage location too, so
+                            // the picker offers every SAP-backed location.
+                            await resolveOrCreateSloc(sapComp.StorageLocation, plantId);
                             const existingComp = await SELECT.one.from('sap.production.portal.OrderComponents')
                                 .where({ order_ID: localOrder.ID, componentMaterial_ID: compMat?.ID });
 
@@ -230,8 +320,8 @@ export default class ProductionService extends cds.ApplicationService {
                                 requiredQty          : parseFloat(sapComp.RequiredQuantity) || 0,
                                 issuedQty            : parseFloat(sapComp.WithdrawnQuantity) || 0,
                                 unit                 : sapComp.BaseUnit || 'PC',
-                                isBackflushed        : false,
-                                status               : sapComp.ComponentStatus || 'RESV'
+                                isBackflushed        : !!sapComp.MatlCompIsMarkedForBackflush,
+                                status               : deriveComponentStatus(sapComp)
                             };
 
                             if (existingComp) {
@@ -298,7 +388,7 @@ export default class ProductionService extends cds.ApplicationService {
                             storageLocation_ID: sloc?.ID || null,
                             movementType      : item.GoodsMovementType || '101',
                             quantity          : parseFloat(item.QuantityInBaseUnit) || 0,
-                            unit              : item.BaseUnit || 'PC',
+                            unit              : item.MaterialBaseUnit || 'PC',
                             postingDate       : doc.PostingDate || new Date().toISOString().split('T')[0]
                         };
 
@@ -319,23 +409,48 @@ export default class ProductionService extends cds.ApplicationService {
         // Helper: generate a Material Document via SAP
         // movementType: '101' = GR, '261' = GI, '350' = QM Block
         // ----------------------------------------------------------------
-        const postSapMaterialDocument = async ({ orderNumber, material, plant, storageLocation, movementType, quantity, unit, headerText }) => {
+        const postSapMaterialDocument = async ({ orderNumber, material, plant, storageLocation, movementType, quantity, unit, headerText, postingDate }) => {
             try {
+                // Field names follow the live Public Cloud metadata: the item
+                // collection is to_MaterialDocumentItem, and the header/item
+                // text and base-unit fields carry MaterialDocument* prefixes.
+                // Goods movements post financially too, so they must share the
+                // caller's posting date — otherwise a confirmation succeeds and
+                // its backflush lands in a locked period.
+                const today    = new Date().toISOString().split('T')[0];
+                const postingOn = postingDate || today;
+                // GoodsMovementCode is the business transaction, not the
+                // movement type: 02 = goods receipt for a production order,
+                // 03 = goods issue, 04 = transfer posting. Sending 02 for a
+                // 261 fails with "Goods movement not possible with mvmt type".
+                const GOODS_MOVEMENT_CODE = {
+                    '101': '02',  // GR for production order
+                    '261': '03',  // GI to production order
+                    '551': '03',  // scrapping is a goods issue
+                    '350': '04'   // QM stock transfer
+                };
+
                 const payload = {
-                    DocumentDate  : new Date().toISOString().split('T')[0],
-                    PostingDate   : new Date().toISOString().split('T')[0],
-                    HeaderText    : headerText || `Posted by Order Management Portal`,
-                    GoodsMovementCode: movementType === '101' ? '01' : '02',
-                    items: [{
+                    DocumentDate  : postingOn,
+                    PostingDate   : postingOn,
+                    MaterialDocumentHeaderText: (headerText || 'Order Management Portal').slice(0, 25),
+                    GoodsMovementCode: GOODS_MOVEMENT_CODE[movementType] || '03',
+                    to_MaterialDocumentItem: [{
                         Material           : material,
                         Plant              : plant,
                         StorageLocation    : storageLocation || '',
                         GoodsMovementType  : movementType,
-                        QuantityInBaseUnit : quantity,
-                        BaseUnit           : unit || 'PC',
+                        // QuantityInBaseUnit is only accepted for batch-managed
+                        // materials; for everything else S/4 requires the entry
+                        // unit pair and rejects the base-unit one outright.
+                        QuantityInEntryUnit: quantity,
+                        EntryUnit          : (unit || 'PC').slice(0, 3),
                         ManufacturingOrder : orderNumber,
-                        ManufacturingOrderItem: '0001',
-                        ItemText           : `Mvt ${movementType} for order ${orderNumber}`
+                        // 'F' = the movement references a production order.
+                        // Without it S/4 rejects the item with "Update control
+                        // of movement type is incorrect".
+                        GoodsMovementRefDocType: 'F',
+                        MaterialDocumentItemText: `Mvt ${movementType} order ${orderNumber}`.slice(0, 50)
                     }]
                 };
                 const result = await sapMatDocSrv.post(A_MaterialDocumentHeader, payload);
@@ -358,11 +473,24 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, 'Order Target Quantity must be greater than zero.');
             }
 
-            // When creating directly in CRTD status: explode BOM + Routing from local master data
-            // then mirror the order header to SAP (real-time CRUD integration)
+            // When creating directly in CRTD status: create the order in S/4
+            // first, then adopt the operations and components it exploded from
+            // the real BOM and routing. Exploding locally first would attach
+            // demo master data to a genuine SAP material.
             if (order.status === 'CRTD') {
-                await this._explodeBOMAndRouting(order, req);
                 await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, order, req);
+                if (req.errors?.length) return;
+
+                const structure = await adoptSapOrderStructure(order.orderNumber, order.plant_ID);
+                if (structure.operations.length || structure.components.length) {
+                    order.operations = structure.operations;
+                    order.components = structure.components;
+                    console.log(`[SAP] Order ${order.orderNumber}: adopted ${structure.operations.length} operation(s) and ${structure.components.length} component(s) from SAP.`);
+                } else {
+                    // SAP produced no structure (e.g. no production version) —
+                    // fall back to local master data for this material.
+                    await this._explodeBOMAndRouting(order, req);
+                }
             }
         });
 
@@ -379,13 +507,22 @@ export default class ProductionService extends cds.ApplicationService {
             // Transition from DRAFT to CRTD
             if (existingOrder.status === 'DRAFT' && orderUpdates.status === 'CRTD') {
                 const fullOrder = { ...existingOrder, ...orderUpdates };
-                await this._explodeBOMAndRouting(fullOrder, req);
+
+                // Same order of operations as CREATE: S/4 owns the explosion.
+                await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, fullOrder, req);
+                if (req.errors?.length) return;
+
+                const structure = await adoptSapOrderStructure(fullOrder.orderNumber, fullOrder.plant_ID);
+                if (structure.operations.length || structure.components.length) {
+                    fullOrder.operations = structure.operations;
+                    fullOrder.components = structure.components;
+                } else {
+                    await this._explodeBOMAndRouting(fullOrder, req);
+                }
+
                 orderUpdates.orderNumber = fullOrder.orderNumber;
                 orderUpdates.operations  = fullOrder.operations;
                 orderUpdates.components  = fullOrder.components;
-
-                // Sync to SAP (real-time CRUD integration)
-                await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, fullOrder, req);
             }
         });
 
@@ -406,25 +543,52 @@ export default class ProductionService extends cds.ApplicationService {
 
             let shortageCount = 0;
 
-            // ----- Fetch live component availability from SAP -----
-            let sapComponents = [];
+            // ----- Fetch SAP's own ATP result and order status -----
+            let sapComponents  = [];
+            let sapStatusCodes = [];
             try {
                 sapComponents = await sapOrderSrv.run(
                     SELECT.from(A_ProductionOrderComponent_2)
                           .where({ ManufacturingOrder: order.orderNumber })
                 );
+                const statuses = await sapOrderSrv.run(
+                    SELECT.from(A_ProductionOrderStatus_2)
+                          .where({ ManufacturingOrder: order.orderNumber })
+                );
+                sapStatusCodes = (statuses || [])
+                    .map(s => (s.StatusShortName || '').trim())
+                    .filter(Boolean);
             } catch (err) {
-                console.warn('[SAP] Could not fetch components from SAP, falling back to local data:', err.message);
+                console.warn('[SAP] ATP data unavailable, falling back to the local ledger:', err.message);
             }
 
-            // Cross-reference SAP withdrawn quantities with required quantities
+            // SAP carries the same component on several reservation items, so
+            // aggregate per material before comparing.
+            const sapByMaterial = new Map();
+            for (const c of (sapComponents || [])) {
+                const agg = sapByMaterial.get(c.Material) || { required: 0, confirmed: 0 };
+                agg.required  += parseFloat(c.RequiredQuantity) || 0;
+                agg.confirmed += parseFloat(c.ConfirmedAvailableQuantity) || 0;
+                sapByMaterial.set(c.Material, agg);
+            }
+            const usingSapData = sapByMaterial.size > 0;
+
             for (const component of order.components) {
-                const sapComp = sapComponents.find(c => c.Material === component.componentMaterialCode);
+                // Local components carry a material UUID, not a code — the old
+                // code compared against component.componentMaterialCode, which
+                // is never populated, so no SAP row ever matched and every
+                // check silently fell through to the seeded local ledger.
+                const material = component.componentMaterial_ID
+                    ? await SELECT.one.from('sap.production.portal.Materials')
+                        .where({ ID: component.componentMaterial_ID })
+                    : null;
+                const sapComp = material ? sapByMaterial.get(material.code) : null;
                 let hasShortage;
 
                 if (sapComp) {
-                    // Use live SAP stock data: required vs withdrawn
-                    hasShortage = parseFloat(sapComp.RequiredQuantity) > parseFloat(sapComp.WithdrawnQuantity + (sapComp.WithdrawnQuantity || 0));
+                    // ConfirmedAvailableQuantity is what SAP's ATP run could
+                    // actually confirm — the real availability figure.
+                    hasShortage = sapComp.confirmed < sapComp.required;
                 } else {
                     // Fallback: check local GoodsMovements ledger
                     const movements = await SELECT.from('sap.production.portal.GoodsMovements')
@@ -457,9 +621,26 @@ export default class ProductionService extends cds.ApplicationService {
                 .set({ status: 'MACA' })
                 .where({ ID: order.ID });
 
-            const notifMsg = shortageCount > 0
-                ? `Material availability check completed for Order ${order.orderNumber}. Found shortage in ${shortageCount} component(s).`
-                : `Material availability check completed for Order ${order.orderNumber}. All components are fully available.`;
+            // SAP's own MSPT (missing parts) flag is the verdict that actually
+            // governs whether a release will succeed — never report "available"
+            // over the top of it.
+            const sapSaysMissingParts = sapStatusCodes.includes('MSPT');
+            const source = usingSapData ? 'SAP ATP' : 'local ledger (SAP unavailable)';
+
+            let notifMsg;
+            if (shortageCount > 0) {
+                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: shortage in ${shortageCount} component(s).`;
+            } else if (sapSaysMissingParts) {
+                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: SAP reports missing parts (MSPT) for this order.`;
+            } else {
+                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: all components fully available.`;
+            }
+            if (sapStatusCodes.length) {
+                notifMsg += ` SAP status: ${sapStatusCodes.join(', ')}.`;
+            }
+
+            // Surface SAP's verdict even if the per-component maths disagreed.
+            if (sapSaysMissingParts && shortageCount === 0) shortageCount = 1;
 
             await INSERT.into('sap.production.portal.ProductionNotifications').entries({
                 type: shortageCount > 0 ? 'ALERT' : 'INFO',
@@ -490,12 +671,23 @@ export default class ProductionService extends cds.ApplicationService {
 
             // ----- Release on SAP -----
             try {
-                // SAP Release is triggered by PATCH on ManufacturingOrderStatus
-                await sapOrderSrv.run(
-                    UPDATE(A_ProductionOrder_2)
-                        .set({ ManufacturingOrderStatus: 'REL' })
-                        .where({ ManufacturingOrder: order.orderNumber })
-                );
+                // OrderIsReleased is read-only in Public Cloud — PATCHing it
+                // fails with "The Data Service Request is required to be
+                // conditional". The API exposes a dedicated ReleaseOrder
+                // function import, which runs the real release logic in S/4.
+                // A_ProductionOrder_2 is ConcurrencyMode="Fixed": S/4 rejects
+                // unconditional calls with "Precondition required", and it
+                // will not accept If-Match: * — only the current ETag.
+                const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
+                if (!etag) {
+                    return req.error(404, `Order ${order.orderNumber} not found in SAP.`);
+                }
+
+                await sapOrderSrv.send({
+                    method : 'POST',
+                    path   : `ReleaseOrder?ManufacturingOrder='${encodeURIComponent(order.orderNumber)}'`,
+                    headers: { 'If-Match': etag }
+                });
             } catch (err) {
                 console.error('[SAP] Could not release order on SAP:', err.message);
                 return req.error(500, `SAP Error: ${err.message}`);
@@ -572,7 +764,7 @@ export default class ProductionService extends cds.ApplicationService {
         // ACTION: Confirm Operation — POST to SAP ProdnOrdConf2
         // ----------------------------------------------------------------
         this.on('confirmOperation', async (req) => {
-            const { orderId, operationId, yieldQty, scrapQty, timeSpent, isFinalConfirmation } = req.data;
+            const { orderId, operationId, yieldQty, scrapQty, timeSpent, isFinalConfirmation, postingDate } = req.data;
 
             const order = await orderRepo.selectWithOperationsAndComponents(orderId);
             if (!order) return req.error(404, `Order ${orderId} not found.`);
@@ -601,21 +793,50 @@ export default class ProductionService extends cds.ApplicationService {
             // ----- POST confirmation to SAP -----
             let sapConfirmationCounter = null;
             try {
+                // Public Cloud ProdnOrdConf2 uses short key names
+                // (OrderID / Sequence / OrderOperation) and Confirmation*
+                // quantity names — see srv/external/API_PROD_ORDER_CONFIRMATION_2_SRV.cds
+                // Plant / ProductionUnit live behind association IDs on the
+                // local model — resolve them or SAP receives empty strings.
+                await this._resolveOrderCodes(order);
+
+                // ConfirmationText is capped at 40 characters in SAP, and the
+                // x-user-id header carries a UUID rather than a name, so look
+                // up something a shop-floor user would recognise.
+                const confirmedBy = await this._resolveUserLabel(req.headers['x-user-id']);
+                const confirmationText = `Portal: ${confirmedBy}`.slice(0, 40);
+
                 const confPayload = {
-                    ManufacturingOrder          : order.orderNumber,
-                    ManufacturingOrderOperation  : String(op.sequence).padStart(4, '0'),
-                    ManufacturingOrderSequence   : '000001',
-                    ConfirmedYieldQuantity       : parseFloat(yieldQty),
-                    ConfirmedScrapQuantity       : parseFloat(scrapQty),
-                    ConfirmedWorkQuantity        : parseFloat(timeSpent),
-                    ConfirmationWorkQuantityUnit : op.timeUnit || 'MIN',
-                    IsFinalConfirmation          : isFinalConfirmation,
-                    ConfirmationText             : `Confirmed by portal user ${req.headers['x-user-id'] || 'unknown'}`,
-                    Plant                        : order.plantCode || ''
+                    OrderID                    : order.orderNumber,
+                    Sequence                   : '000000',
+                    OrderOperation             : String(op.sequence).padStart(4, '0'),
+                    ConfirmationYieldQuantity  : parseFloat(yieldQty),
+                    ConfirmationScrapQuantity  : parseFloat(scrapQty),
+                    ConfirmationUnit           : (order.productionUnit || 'PC').slice(0, 3),
+                    FinalConfirmationType      : isFinalConfirmation ? 'X' : ' ',
+                    IsFinalConfirmation        : isFinalConfirmation,
+                    ConfirmationText           : confirmationText,
+                    Plant                      : order.plantCode || ''
                 };
 
+                // Activity 1 only exists when the operation's work centre
+                // defines standard values. Posting a work quantity against an
+                // operation without one fails with "Activity 1 is not defined",
+                // so only send it when there is time to report.
+                const workQuantity = parseFloat(timeSpent) || 0;
+                if (workQuantity > 0) {
+                    confPayload.OpConfirmedWorkQuantity1 = workQuantity;
+                    confPayload.OpWorkQuantityUnit1      = (op.timeUnit || 'MIN').slice(0, 3);
+                }
+
+                // Only send a posting date when the caller picked one; SAP
+                // otherwise applies its own default.
+                if (postingDate) {
+                    confPayload.PostingDate = postingDate;
+                }
+
                 const sapResult = await sapConfirmSrv.post(ProdnOrdConf2, confPayload);
-                sapConfirmationCounter = sapResult?.ConfirmationCounter;
+                sapConfirmationCounter = sapResult?.ConfirmationCount;
                 console.log(`[SAP] Confirmation posted. Counter: ${sapConfirmationCounter}`);
             } catch (err) {
                 console.error('[SAP] Confirmation POST failed:', err.message);
@@ -636,20 +857,46 @@ export default class ProductionService extends cds.ApplicationService {
 
             // ----- Backflush GI via SAP if final confirmation -----
             if (isFinalConfirmation) {
+                // Components carry a material UUID, not a code. Passing the
+                // UUID straight through makes SAP reject the goods issue with
+                // "The material number is longer than the length set".
+                const materialIds = [...new Set(order.components
+                    .map(c => c.componentMaterial_ID)
+                    .filter(Boolean))];
+                const materialRows = materialIds.length
+                    ? await SELECT.from('sap.production.portal.Materials')
+                        .columns('ID', 'code')
+                        .where({ ID: { in: materialIds } })
+                    : [];
+                const materialCodeById = new Map(materialRows.map(m => [m.ID, m.code]));
+
                 for (const comp of order.components) {
+                    // Components flagged for backflush are issued by SAP as
+                    // part of the confirmation itself. Posting our own 261
+                    // would issue the stock a second time.
+                    if (comp.isBackflushed) {
+                        console.log(`[SAP] Component ${comp.componentMaterial_ID} is backflushed by SAP — skipping explicit GI.`);
+                        continue;
+                    }
+
                     if (comp.issuedQty < comp.requiredQty) {
                         const issueQty = parseFloat(comp.requiredQty) - parseFloat(comp.issuedQty);
+                        const componentCode = materialCodeById.get(comp.componentMaterial_ID);
+                        if (!componentCode) {
+                            return req.error(400, `Cannot post goods issue: no material code for component ${comp.componentMaterial_ID}.`);
+                        }
 
                         try {
                             // Post GI 261 via SAP Material Document API
                             await postSapMaterialDocument({
                                 orderNumber    : order.orderNumber,
-                                material       : comp.componentMaterialCode || comp.componentMaterial_ID,
+                                material       : componentCode,
                                 plant          : order.plantCode || '',
                                 storageLocation: order.storageLocationCode || '',
                                 movementType   : '261',
                                 quantity       : issueQty,
                                 unit           : comp.unit,
+                                postingDate    : postingDate,
                                 headerText     : `GI backflush for order ${order.orderNumber}`
                             });
                         } catch (err) {
@@ -786,6 +1033,9 @@ export default class ProductionService extends cds.ApplicationService {
                     postingDate     : new Date().toISOString().split('T')[0]
                 });
 
+                // A rejected inspection also completes the order — tell SAP.
+                await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
+
                 await UPDATE('sap.production.portal.ProductionOrders')
                     .set({ status: 'TECO' })
                     .where({ ID: lot.order_ID });
@@ -810,10 +1060,15 @@ export default class ProductionService extends cds.ApplicationService {
         // ACTION: Post Goods Receipt (GR 101) via SAP Material Document API
         // ----------------------------------------------------------------
         this.on('postGoodsReceipt', async (req) => {
-            const { orderId, quantity, slocId } = req.data;
+            const { orderId, quantity, slocId, postingDate } = req.data;
 
             const order = await orderRepo.selectById(orderId);
             if (!order) return req.error(404, `Production Order ${orderId} not found.`);
+
+            // Material / plant / storage location codes live behind
+            // association IDs — without this the GR posts a UUID as the
+            // material number and SAP rejects it as too long.
+            await this._resolveOrderCodes(order);
 
             if (order.status !== 'CNF' && order.status !== 'PCNF') {
                 return req.error(400, `Goods Receipt not permitted in status ${order.status}. Must be in Confirmed (CNF) state.`);
@@ -833,12 +1088,13 @@ export default class ProductionService extends cds.ApplicationService {
             try {
                 const sapGR = await postSapMaterialDocument({
                     orderNumber    : order.orderNumber,
-                    material       : order.materialCode || order.material_ID,
-                    plant          : order.plantCode || '',
+                    material       : order.materialCode,
+                    plant          : order.plantCode,
                     storageLocation: order.storageLocationCode || '',
                     movementType   : '101',
                     quantity,
-                    unit           : 'PC',
+                    unit           : order.productionUnit || 'PC',
+                    postingDate,
                     headerText     : `GR for production order ${order.orderNumber}`
                 });
                 docNum = sapGR?.MaterialDocument || docNum;
@@ -875,6 +1131,9 @@ export default class ProductionService extends cds.ApplicationService {
                 .where({ ID: order.ID });
 
             if (isFullDelivery) {
+                // Mirror the completion to SAP, not just locally.
+                await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
+
                 await UPDATE('sap.production.portal.ProductionOrders')
                     .set({ status: 'TECO' })
                     .where({ ID: order.ID });
@@ -909,20 +1168,139 @@ export default class ProductionService extends cds.ApplicationService {
     // PRIVATE: Sync order header to SAP (CREATE/PATCH A_ProductionOrder_2)
     // Called when an order transitions to CRTD status
     // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
+    // PRIVATE: Fill the flat *Code fields on an order from its
+    // association IDs. SAP payloads need plant / material / storage
+    // location CODES, but the local model only carries UUIDs — without
+    // this the payload goes out with empty strings and SAP rejects it
+    // with "Provide mandatory property ProductionPlant".
+    // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
+    // PRIVATE: Read the current ETag of an order in SAP. S/4 builds it
+    // from LastChangeDateTime as W/"'<value>'", and every write or
+    // action against A_ProductionOrder_2 must echo it back in If-Match.
+    // ----------------------------------------------------------------
+    async _fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, orderNumber) {
+        const sapOrder = await sapOrderSrv.run(
+            SELECT.one.from(A_ProductionOrder_2)
+                .columns('ManufacturingOrder', 'LastChangeDateTime')
+                .where({ ManufacturingOrder: orderNumber })
+        );
+        return sapOrder?.LastChangeDateTime ? `W/"'${sapOrder.LastChangeDateTime}'"` : null;
+    }
+
+    // ----------------------------------------------------------------
+    // PRIVATE: Turn the x-user-id header (a UUID) into a human label for
+    // SAP text fields. Falls back to 'portal' for unknown or malformed
+    // ids so a confirmation is never blocked by a display detail.
+    // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
+    // PRIVATE: Technically complete an order in S/4 via the
+    // TechlyCmpltOrder function import. The portal used to flip its own
+    // status to TECO without telling SAP, so the order stayed open there.
+    //
+    // Deliberately non-fatal: this runs after a goods receipt has already
+    // posted, and failing the whole request would roll back local state
+    // for a document SAP has already accepted.
+    // ----------------------------------------------------------------
+    async _technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, orderNumber) {
+        // The goods receipt that triggers this still holds an SAP lock on the
+        // order for a moment ("Order X is already being processed by ..."), so
+        // retry briefly before giving up.
+        const MAX_ATTEMPTS = 4;
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, orderNumber);
+                if (!etag) {
+                    console.warn(`[SAP] Order ${orderNumber} not found in SAP — TECO skipped.`);
+                    return false;
+                }
+                await sapOrderSrv.send({
+                    method : 'POST',
+                    path   : `TechlyCmpltOrder?ManufacturingOrder='${encodeURIComponent(orderNumber)}'`,
+                    headers: { 'If-Match': etag }
+                });
+                console.log(`[SAP] Order ${orderNumber} technically completed (TECO).`);
+                return true;
+            } catch (err) {
+                const isLocked = /already being processed|is locked|being edited/i.test(err.message || '');
+                if (isLocked && attempt < MAX_ATTEMPTS) {
+                    const waitMs = attempt * 2000;
+                    console.warn(`[SAP] Order ${orderNumber} locked; retrying TECO in ${waitMs}ms (attempt ${attempt}/${MAX_ATTEMPTS}).`);
+                    await new Promise(resolve => setTimeout(resolve, waitMs));
+                    continue;
+                }
+                console.error(`[SAP] Could not set TECO on order ${orderNumber}:`, err.message);
+                return false;
+            }
+        }
+        return false;
+    }
+
+    async _resolveUserLabel(userId) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId || '')) {
+            return 'portal';
+        }
+        try {
+            const user = await SELECT.one.from('sap.production.portal.Users')
+                .columns('username', 'name')
+                .where({ ID: userId });
+            return user?.username || user?.name || 'portal';
+        } catch {
+            return 'portal';
+        }
+    }
+
+    async _resolveOrderCodes(order) {
+        if (!order) return order;
+
+        if (!order.materialCode && order.material_ID) {
+            const material = await SELECT.one.from('sap.production.portal.Materials')
+                .where({ ID: order.material_ID });
+            order.materialCode   = material?.code;
+            order.productionUnit = order.productionUnit || material?.baseUnit;
+        }
+        if (!order.plantCode && order.plant_ID) {
+            const plant = await SELECT.one.from('sap.production.portal.Plants')
+                .where({ ID: order.plant_ID });
+            order.plantCode = plant?.code;
+        }
+        if (!order.storageLocationCode && order.storageLocation_ID) {
+            const sloc = await SELECT.one.from('sap.production.portal.StorageLocations')
+                .where({ ID: order.storageLocation_ID });
+            order.storageLocationCode = sloc?.code;
+        }
+        return order;
+    }
+
     async _syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, order, req) {
         try {
+            await this._resolveOrderCodes(order);
+
+            if (!order.materialCode || !order.plantCode) {
+                const missing = !order.materialCode ? 'Material' : 'Production Plant';
+                if (req) return req.error(400, `Cannot sync order to SAP: ${missing} could not be resolved.`);
+                return;
+            }
+
             const payload = {
-                ManufacturingOrder        : order.orderNumber,
-                ManufacturingOrderType    : 'PP01',
-                Material                  : order.materialCode || '',
-                MfgOrderPlannedTotalQty   : parseFloat(order.targetQty),
+                ManufacturingOrderType    : cds.env.requires.ZAPI_PRODUCTION_ORDER_2_SRV?.orderType || 'ZPPS',
+                Material                  : order.materialCode,
+                ProductionPlant           : order.plantCode,
+                StorageLocation           : order.storageLocationCode || '',
+                TotalQuantity             : parseFloat(order.targetQty),
+                ProductionUnit            : order.productionUnit || 'PC',
                 MfgOrderPlannedStartDate  : order.plannedStartDate || new Date().toISOString().split('T')[0],
-                MfgOrderPlannedEndDate    : order.plannedEndDate   || new Date().toISOString().split('T')[0],
-                ProductionPlant           : order.plantCode || '',
-                StorageLocation           : order.storageLocationCode || ''
+                MfgOrderPlannedEndDate    : order.plannedEndDate   || new Date().toISOString().split('T')[0]
             };
-            await sapOrderSrv.post(A_ProductionOrder_2, payload);
-            console.log(`[SAP] Order ${order.orderNumber} synced to SAP.`);
+            // S/4HANA assigns the order number internally — adopt whatever it
+            // returns so the local record matches the real SAP order.
+            const result = await sapOrderSrv.post(A_ProductionOrder_2, payload);
+            if (result?.ManufacturingOrder) {
+                order.orderNumber = result.ManufacturingOrder;
+            }
+            console.log(`[SAP] Order ${order.orderNumber} created in SAP.`);
         } catch (err) {
             console.error(`[SAP] Could not sync order ${order.orderNumber} to SAP:`, err.message);
             if (req) {
@@ -936,32 +1314,34 @@ export default class ProductionService extends cds.ApplicationService {
     // ----------------------------------------------------------------
     async _explodeBOMAndRouting(order, req) {
         if (!order.orderNumber) {
-            const maxOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
-                .columns('max(orderNumber) as maxNum');
-            const nextNum  = maxOrder && maxOrder.maxNum
-                ? (parseInt(maxOrder.maxNum) + 1).toString()
-                : '100000000001';
-            order.orderNumber = nextNum;
+            // Local order numbers live in a synthetic 12-digit range so they
+            // never collide with numbers synced from SAP — those are short
+            // (e.g. '600047') and are not always numeric (e.g. 'ZZZZZ'), so a
+            // plain max(orderNumber) picks the wrong row and yields NaN.
+            const LOCAL_RANGE_START = 100000000000;
+            const rows = await SELECT.from('sap.production.portal.ProductionOrders')
+                .columns('orderNumber');
+            const maxLocal = rows
+                .map(r => parseInt(r.orderNumber, 10))
+                .filter(n => Number.isFinite(n) && n >= LOCAL_RANGE_START)
+                .reduce((a, b) => Math.max(a, b), LOCAL_RANGE_START);
+            order.orderNumber = String(maxLocal + 1);
         }
 
-        let bom = await this._getBOMAndComponents(order.material_ID, order.plant_ID);
+        // No "any BOM in the database" fallback: grabbing an unrelated BOM
+        // produces an order that looks plausible but describes a different
+        // product, and its shortages are meaningless.
+        await this._resolveOrderCodes(order);
+        const forWhat = `material ${order.materialCode || order.material_ID} / plant ${order.plantCode || order.plant_ID}`;
+
+        const bom = await this._getBOMAndComponents(order.material_ID, order.plant_ID);
         if (!bom) {
-            // Try to find ANY BOM in the database as a mock fallback
-            bom = await SELECT.one.from('sap.production.portal.BOMs')
-                .columns(b => { b('*'); b.components(c => { c('*') }); });
-        }
-        if (!bom) {
-            return req.error(400, `No active Bill of Materials (BOM) found in database.`);
+            return req.error(400, `No Bill of Materials found for ${forWhat}. SAP normally supplies the BOM when the order is created there.`);
         }
 
-        let routing = await this._getRoutingAndOperations(order.material_ID, order.plant_ID);
+        const routing = await this._getRoutingAndOperations(order.material_ID, order.plant_ID);
         if (!routing) {
-            // Try to find ANY Routing in the database as a mock fallback
-            routing = await SELECT.one.from('sap.production.portal.Routings')
-                .columns(r => { r('*'); r.operations(o => { o('*') }); });
-        }
-        if (!routing) {
-            return req.error(400, `No active Routing found in database.`);
+            return req.error(400, `No Routing found for ${forWhat}. SAP normally supplies the routing when the order is created there.`);
         }
 
         order.components = bom.components.map(comp => ({

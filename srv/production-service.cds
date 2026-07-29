@@ -38,12 +38,15 @@ service ProductionService {
     action startOrder(orderId: UUID) returns { success: Boolean; status: String; };
     
     action confirmOperation(
-        orderId: UUID, 
-        operationId: UUID, 
-        yieldQty: Decimal(15, 3), 
-        scrapQty: Decimal(15, 3), 
+        orderId: UUID,
+        operationId: UUID,
+        yieldQty: Decimal(15, 3),
+        scrapQty: Decimal(15, 3),
         timeSpent: Decimal(10, 2),
-        isFinalConfirmation: Boolean
+        isFinalConfirmation: Boolean,
+        // Optional. A confirmation posts financially, so it must land in an
+        // open period — omit to let SAP use its own default posting date.
+        postingDate: Date
     ) returns { success: Boolean; status: String; };
 
     action submitUsageDecision(
@@ -53,5 +56,12 @@ service ProductionService {
         usageDecision: String // 'UDAC' (Accept) or 'UDRJ' (Reject)
     ) returns { success: Boolean; status: String; };
 
-    action postGoodsReceipt(orderId: UUID, quantity: Decimal(15, 3), slocId: UUID) returns { success: Boolean; docNum: String; };
+    action postGoodsReceipt(
+        orderId: UUID,
+        quantity: Decimal(15, 3),
+        slocId: UUID,
+        // Optional, as on confirmOperation — a material document must post
+        // into an open MM period.
+        postingDate: Date
+    ) returns { success: Boolean; docNum: String; };
 }

@@ -19,7 +19,7 @@ export const ProductionOrderDetail: React.FC = () => {
   const { data: order, isLoading } = useQuery({
     queryKey: ['orderDetail', id],
     queryFn: async () => {
-      const res = await api.get(`/odata/v4/production/ProductionOrders(${id})?$expand=material,plant,storageLocation,operations($orderby=sequence asc),components($expand=componentMaterial),goodsMovements($expand=material)`);
+      const res = await api.get(`/odata/v4/production/ProductionOrders(${id})?$expand=material,plant,storageLocation,operations($orderby=sequence asc;$expand=workCenter),components($expand=componentMaterial),goodsMovements($expand=material)`);
       return res.data;
     }
   });
@@ -36,7 +36,9 @@ export const ProductionOrderDetail: React.FC = () => {
   const checkMaterialMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/odata/v4/production/checkMaterialAvailability', { orderId: id });
-      return res.data?.value;
+      // OData v4 action results come back flat, not wrapped in `value` —
+      // that wrapper only exists on collection reads.
+      return res.data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
@@ -54,7 +56,7 @@ export const ProductionOrderDetail: React.FC = () => {
   const releaseOrderMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/odata/v4/production/releaseOrder', { orderId: id });
-      return res.data?.value;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
@@ -68,7 +70,7 @@ export const ProductionOrderDetail: React.FC = () => {
   const startOrderMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/odata/v4/production/startOrder', { orderId: id });
-      return res.data?.value;
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });

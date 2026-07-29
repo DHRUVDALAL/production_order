@@ -145,7 +145,8 @@ body {
 .sap-badge-PDLV { background: var(--status-started-bg); color: var(--status-started-text); }
 .sap-badge-TECO { background: var(--status-complete-bg); color: var(--status-complete-text); }
 .sap-badge-CLSD { background: var(--status-complete-bg); color: var(--status-complete-text); }
-
+.sap-badge-GI { background: var(--status-started-bg); color: var(--status-started-text); }
+.sap-badge-GR { background: var(--status-delivered-bg); color: var(--status-delivered-text); }
 /* Fiori-styled forms */
 .sap-form-group {
   margin-bottom: 1.25rem;

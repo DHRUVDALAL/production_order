@@ -43,8 +43,8 @@ export const Dashboard: React.FC = () => {
   const total = ordersData.length;
   const draft = ordersData.filter((o: any) => o.status === 'DRAFT').length;
   const created = ordersData.filter((o: any) => o.status === 'CRTD' || o.status === 'MACA').length;
-  const inProgress = ordersData.filter((o: any) => o.status === 'REL' || o.status === 'STRT' || o.status === 'INSP').length;
-  const completed = ordersData.filter((o: any) => o.status === 'TECO' || o.status === 'CLSD' || o.status === 'DLV').length;
+  const inProgress = ordersData.filter((o: any) => ['REL', 'STRT', 'GI', 'GMPS', 'INSP', 'CNF'].includes(o.status)).length;
+  const completed = ordersData.filter((o: any) => ['GR', 'PDLV', 'DLV', 'TECO', 'CLSD'].includes(o.status)).length;
 
   // Recent 5 alerts
   const recentAlerts = notificationsData.slice(0, 5);

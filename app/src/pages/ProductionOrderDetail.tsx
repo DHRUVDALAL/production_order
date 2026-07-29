@@ -121,10 +121,10 @@ export const ProductionOrderDetail: React.FC = () => {
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
   // Determine stage index for progress bar
-  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'INSP', 'CNF', 'TECO', 'CLSD'];
+  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'];
   let currentStageIndex = statusFlow.indexOf(order.status);
-  if (order.status === 'PDLV') currentStageIndex = 4; // count as STRT/In Progress
-  if (order.status === 'DLV') currentStageIndex = 6;  // Confirmed/Finished
+  if (order.status === 'GMPS') currentStageIndex = statusFlow.indexOf('GI');
+  if (order.status === 'PDLV' || order.status === 'DLV') currentStageIndex = statusFlow.indexOf('GR');
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>

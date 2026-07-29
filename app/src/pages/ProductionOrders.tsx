@@ -239,7 +239,7 @@ export const ProductionOrders: React.FC = () => {
             <span>Filter Status:</span>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'INSP', 'TECO', 'CLSD'].map((st) => (
+            {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
               <button
                 key={st}
                 onClick={() => setFilterStatus(st)}

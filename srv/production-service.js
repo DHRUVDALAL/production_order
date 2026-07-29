@@ -44,7 +44,9 @@ export default class ProductionService extends cds.ApplicationService {
             if (s.includes('REL'))   return 'REL';
             if (s.includes('PCNF'))  return 'PCNF';
             if (s.includes('CNF'))   return 'CNF';
-            if (s.includes('DLV'))   return 'DLV';
+            if (s.includes('DLV'))   return 'GR';
+            if (s.includes('PDLV'))  return 'GR';
+            if (s.includes('GMPS'))  return 'GI';
             if (s.includes('TECO'))  return 'TECO';
             if (s.includes('CRTD'))  return 'CRTD';
             return 'CRTD';

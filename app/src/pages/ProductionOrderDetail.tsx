@@ -147,14 +147,14 @@ export const ProductionOrderDetail: React.FC = () => {
       )}
 
       {/* Progress Flow Indicator */}
-      <div className="sap-card" style={{ marginBottom: '2rem', padding: '1rem 1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+      <div className="sap-card" style={{ marginBottom: '2rem', padding: '1rem 1.5rem', overflowX: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', gap: '0.5rem', minWidth: '950px' }}>
           {statusFlow.map((stage, idx) => {
             const isCompleted = idx <= currentStageIndex;
             const isCurrent = idx === currentStageIndex;
             return (
               <React.Fragment key={stage}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem', flex: 1, minWidth: '80px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem', flex: 1, minWidth: '55px' }}>
                   <div style={{
                     width: '24px',
                     height: '24px',
@@ -173,7 +173,7 @@ export const ProductionOrderDetail: React.FC = () => {
                   <span style={{ fontSize: '0.7rem', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? '#0a6ed1' : '#495057' }}>{stage}</span>
                 </div>
                 {idx < statusFlow.length - 1 && (
-                  <div style={{ height: '2px', backgroundColor: idx < currentStageIndex ? '#37b24d' : '#dee2e6', flex: 2, minWidth: '20px' }}></div>
+                  <div style={{ height: '2px', backgroundColor: idx < currentStageIndex ? '#37b24d' : '#dee2e6', flex: 1, minWidth: '15px' }}></div>
                 )}
               </React.Fragment>
             );

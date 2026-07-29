@@ -135,7 +135,7 @@ export default class ProductionService extends cds.ApplicationService {
                 }
                 console.log('[SAP SYNC] Fetching ProductionOrders from SAP...');
                 const sapOrders = await sapOrderSrv.run(
-                    SELECT.from(A_ProductionOrder_2).limit(200)
+                    SELECT.from(A_ProductionOrder_2).orderBy('ManufacturingOrder desc').limit(200)
                 );
 
                 for (const sapOrder of (sapOrders || [])) {

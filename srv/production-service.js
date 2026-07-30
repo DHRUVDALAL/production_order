@@ -704,7 +704,7 @@ export default class ProductionService extends cds.ApplicationService {
                     DocumentDate  : postingOn,
                     PostingDate   : postingOn,
                     MaterialDocumentHeaderText: 'Portal Goods Receipt',
-                    GoodsMovementCode: '02',
+                    GoodsMovementCode: '05',
                     to_MaterialDocumentItem: [{
                         Material           : matchedOrder.Material,
                         Plant              : matchedOrder.ProductionPlant,
@@ -720,6 +720,14 @@ export default class ProductionService extends cds.ApplicationService {
 
                 const sapGR = await sapMatDocSrv.post(A_MaterialDocumentHeader, payload);
                 const docNum = sapGR?.MaterialDocument || 'GR-POSTED';
+
+                // Automatically trigger TECO if order target quantity is fully delivered
+                const [sapItem] = await sapOrderSrv.run(SELECT.from(A_ProductionOrderItem_2).where({ ManufacturingOrder: matchedOrder.ManufacturingOrder }));
+                const currentDelivered = parseFloat(sapItem?.MfgOrderItemActualDeliveredQty) || 0;
+                const target = parseFloat(matchedOrder.TotalQuantity) || 0;
+                if (currentDelivered + parseFloat(quantity) >= target) {
+                    await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, matchedOrder.ManufacturingOrder);
+                }
 
                 await INSERT.into('sap.production.portal.ProductionNotifications').entries({
                     type    : 'INFO',
@@ -758,5 +766,36 @@ export default class ProductionService extends cds.ApplicationService {
         } catch {
             return 'portal';
         }
+    }
+
+    async _technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, orderNumber) {
+        const MAX_ATTEMPTS = 4;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, orderNumber);
+                if (!etag) {
+                    console.warn(`[SAP] Order ${orderNumber} not found in SAP — TECO skipped.`);
+                    return false;
+                }
+                await sapOrderSrv.send({
+                    method : 'POST',
+                    path   : `TechlyCmpltOrder?ManufacturingOrder='${encodeURIComponent(orderNumber)}'`,
+                    headers: { 'If-Match': etag }
+                });
+                console.log(`[SAP] Order ${orderNumber} technically completed (TECO).`);
+                return true;
+            } catch (err) {
+                const isLocked = /already being processed|is locked|being edited/i.test(err.message || '');
+                if (isLocked && attempt < MAX_ATTEMPTS) {
+                    const waitMs = attempt * 2000;
+                    console.warn(`[SAP] Order ${orderNumber} locked; retrying TECO in ${waitMs}ms (attempt ${attempt}/${MAX_ATTEMPTS}).`);
+                    await new Promise(resolve => setTimeout(resolve, waitMs));
+                    continue;
+                }
+                console.error(`[SAP] Could not set TECO on order ${orderNumber}:`, err.message);
+                return false;
+            }
+        }
+        return false;
     }
 }

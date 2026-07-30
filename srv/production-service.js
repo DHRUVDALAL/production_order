@@ -399,6 +399,42 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ================================================================
+        // UPDATE: ProductionOrders (PATCH targetQty to S/4HANA)
+        // ================================================================
+        this.on('UPDATE', 'ProductionOrders', async (req) => {
+            const id = req.params[0]?.ID || req.data?.ID;
+            const { targetQty } = req.data;
+            if (targetQty === undefined) return;
+
+            if (parseFloat(targetQty) <= 0) {
+                return req.error(400, 'Target Quantity must be greater than zero.');
+            }
+
+            // Find matching order in SAP
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).limit(100));
+            const matched = sapOrders.find(o => uuid(o.ManufacturingOrder) === id);
+            if (!matched) return req.error(404, `Order with ID ${id} not found in SAP.`);
+
+            try {
+                const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, matched.ManufacturingOrder);
+                if (!etag) return req.error(404, `Order ${matched.ManufacturingOrder} not found in SAP.`);
+
+                // Perform PATCH on target quantity
+                await sapOrderSrv.send({
+                    method : 'PATCH',
+                    path   : `A_ProductionOrder_2('${encodeURIComponent(matched.ManufacturingOrder)}')`,
+                    headers: { 'If-Match': etag, 'Content-Type': 'application/json' },
+                    data   : { TotalQuantity: parseFloat(targetQty) }
+                });
+                console.log(`[SAP] Target quantity for Order ${matched.ManufacturingOrder} updated to ${targetQty}.`);
+            } catch (err) {
+                return req.error(500, `SAP S/4HANA Cloud Quantity Update Error: ${err.message}`);
+            }
+
+            return { ID: id, targetQty: parseFloat(targetQty) };
+        });
+
+        // ================================================================
         // ACTION: Check Material Availability (ATP Check)
         // ================================================================
         this.on('checkMaterialAvailability', async (req) => {

@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2 } from 'lucide-react';
 
 export const ProductionOrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +14,27 @@ export const ProductionOrderDetail: React.FC = () => {
   const [showGrForm, setShowGrForm] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isEditingQty, setIsEditingQty] = useState(false);
+  const [editQtyValue, setEditQtyValue] = useState('');
+
+  const updateQtyMutation = useMutation({
+    mutationFn: async (newQty: number) => {
+      setErrorMsg('');
+      setSuccessMsg('');
+      const res = await api.patch(`/odata/v4/production/ProductionOrders(${id})`, {
+        targetQty: newQty
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      setSuccessMsg('Target quantity updated successfully!');
+      setIsEditingQty(false);
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to update target quantity.');
+    }
+  });
 
   // Fetch Order details
   const { data: order, isLoading } = useQuery({
@@ -204,7 +225,70 @@ export const ProductionOrderDetail: React.FC = () => {
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Target Quantity</strong>
-                <div style={{ fontWeight: 600, marginTop: '0.2rem' }}>{parseFloat(order.targetQty).toFixed(0)} PC</div>
+                {isEditingQty ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
+                    <input
+                      type="number"
+                      value={editQtyValue}
+                      onChange={(e) => setEditQtyValue(e.target.value)}
+                      style={{
+                        width: '70px',
+                        padding: '2px 5px',
+                        fontSize: '0.85rem',
+                        border: '1px solid var(--sap-border-color)',
+                        borderRadius: '4px'
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const val = parseFloat(editQtyValue);
+                        if (!isNaN(val) && val > 0) {
+                          updateQtyMutation.mutate(val);
+                        }
+                      }}
+                      disabled={updateQtyMutation.isPending}
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: '#37b24d',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem'
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setIsEditingQty(false)}
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: '#fa5252',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, marginTop: '0.2rem' }}>
+                    <span>{parseFloat(order.targetQty).toFixed(0)} PC</span>
+                    {['CRTD', 'REL'].includes(order.status) && (
+                      <Edit2
+                        size={14}
+                        style={{ cursor: 'pointer', color: '#0a6ed1' }}
+                        onClick={() => {
+                          setEditQtyValue(parseFloat(order.targetQty).toFixed(0));
+                          setIsEditingQty(true);
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Confirmed Yield</strong>

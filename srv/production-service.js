@@ -419,12 +419,12 @@ export default class ProductionService extends cds.ApplicationService {
                 const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, matched.ManufacturingOrder);
                 if (!etag) return req.error(404, `Order ${matched.ManufacturingOrder} not found in SAP.`);
 
-                // Perform PATCH on target quantity
+                // Perform PATCH on target quantity (OData v2 requires decimal properties to be serialized as strings)
                 await sapOrderSrv.send({
                     method : 'PATCH',
                     path   : `A_ProductionOrder_2('${encodeURIComponent(matched.ManufacturingOrder)}')`,
                     headers: { 'If-Match': etag, 'Content-Type': 'application/json' },
-                    data   : { TotalQuantity: parseFloat(targetQty) }
+                    data   : { TotalQuantity: String(parseFloat(targetQty).toFixed(3)) }
                 });
                 console.log(`[SAP] Target quantity for Order ${matched.ManufacturingOrder} updated to ${targetQty}.`);
             } catch (err) {

@@ -121,55 +121,6 @@ export const Operations: React.FC = () => {
         </div>
       )}
 
-      {/* Dialog for Recording Confirmation */}
-      {selectedOp && (
-        <div className="sap-card" style={{ marginBottom: '2rem', border: '1px solid #0a6ed1' }}>
-          <div className="sap-card-header">
-            <h3 className="sap-card-title">Record Time & Yield: Order {selectedOrder.orderNumber} - Op {selectedOp.sequence}</h3>
-          </div>
-          <form onSubmit={handleConfirmSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem' }}>
-            <div className="sap-form-group">
-              <label className="sap-label">Yield Quantity (PC) *</label>
-              <input type="number" className="sap-input" value={yieldQty} onChange={e => setYieldQty(e.target.value)} min="0" required />
-            </div>
-
-            <div className="sap-form-group">
-              <label className="sap-label">Scrap Quantity (PC) *</label>
-              <input type="number" className="sap-input" value={scrapQty} onChange={e => setScrapQty(e.target.value)} min="0" required />
-            </div>
-
-            <div className="sap-form-group">
-              <label className="sap-label">Labor/Machine Time Spent (Min) *</label>
-              <input type="number" className="sap-input" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} min="0" required />
-            </div>
-
-            <div className="sap-form-group">
-              <label className="sap-label">Posting Date *</label>
-              <input type="date" className="sap-input" value={postingDate} onChange={e => setPostingDate(e.target.value)} required />
-              <span style={{ fontSize: '0.72rem', color: '#6a7b8c', marginTop: '0.25rem' }}>
-                Must fall in an open SAP posting period.
-              </span>
-            </div>
-
-            <div className="sap-form-group">
-              <label className="sap-label">Confirmation Type</label>
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                  <input type="checkbox" checked={isFinal} onChange={e => setIsFinal(e.target.checked)} />
-                  <span>Final Confirmation (CNF)</span>
-                </label>
-              </div>
-            </div>
-
-            <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '0.5rem' }}>
-              <button type="button" className="sap-btn sap-btn-secondary" onClick={() => { setSelectedOp(null); setSelectedOrder(null); }}>Cancel</button>
-              <button type="submit" className="sap-btn sap-btn-primary" disabled={confirmOpMutation.isPending}>
-                {confirmOpMutation.isPending ? 'Confirming...' : 'Save Confirmation'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* Grid list of active orders & operations */}
       {activeOrders.length === 0 ? (
@@ -242,6 +193,56 @@ export const Operations: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* Inline Dialog for Recording Confirmation */}
+              {selectedOp && selectedOrder?.ID === order.ID && (
+                <div className="sap-card" style={{ marginTop: '1.5rem', border: '1px solid #0a6ed1', backgroundColor: 'var(--sap-bg-color)' }}>
+                  <div className="sap-card-header">
+                    <h4 style={{ fontSize: '1rem', fontWeight: 700 }}>Record Time & Yield: Op {selectedOp.sequence} ({selectedOp.description})</h4>
+                  </div>
+                  <form onSubmit={handleConfirmSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem' }}>
+                    <div className="sap-form-group">
+                      <label className="sap-label">Yield Quantity (PC) *</label>
+                      <input type="number" className="sap-input" value={yieldQty} onChange={e => setYieldQty(e.target.value)} min="0" required />
+                    </div>
+
+                    <div className="sap-form-group">
+                      <label className="sap-label">Scrap Quantity (PC) *</label>
+                      <input type="number" className="sap-input" value={scrapQty} onChange={e => setScrapQty(e.target.value)} min="0" required />
+                    </div>
+
+                    <div className="sap-form-group">
+                      <label className="sap-label">Labor/Machine Time Spent (Min) *</label>
+                      <input type="number" className="sap-input" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} min="0" required />
+                    </div>
+
+                    <div className="sap-form-group">
+                      <label className="sap-label">Posting Date *</label>
+                      <input type="date" className="sap-input" value={postingDate} onChange={e => setPostingDate(e.target.value)} required />
+                      <span style={{ fontSize: '0.72rem', color: '#6a7b8c', marginTop: '0.25rem' }}>
+                        Must fall in an open SAP posting period.
+                      </span>
+                    </div>
+
+                    <div className="sap-form-group">
+                      <label className="sap-label">Confirmation Type</label>
+                      <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                          <input type="checkbox" checked={isFinal} onChange={e => setIsFinal(e.target.checked)} />
+                          <span>Final Confirmation (CNF)</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '0.5rem' }}>
+                      <button type="button" className="sap-btn sap-btn-secondary" onClick={() => { setSelectedOp(null); setSelectedOrder(null); }}>Cancel</button>
+                      <button type="submit" className="sap-btn sap-btn-primary" disabled={confirmOpMutation.isPending}>
+                        {confirmOpMutation.isPending ? 'Confirming...' : 'Save Confirmation'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
             </div>
           ))}
         </div>

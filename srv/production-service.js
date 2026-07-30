@@ -394,6 +394,57 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ================================================================
+        // ACTION: Check Material Availability (ATP Check)
+        // ================================================================
+        this.on('checkMaterialAvailability', async (req) => {
+            const { orderId } = req.data;
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).limit(100));
+            const matched = sapOrders.find(o => uuid(o.ManufacturingOrder) === orderId);
+            if (!matched) return req.error(404, `Order with ID ${orderId} not found in SAP.`);
+
+            let shortageCount = 0;
+            let sapComponents = [];
+            let sapStatusCodes = [];
+
+            try {
+                sapComponents = await sapOrderSrv.run(
+                    SELECT.from(A_ProductionOrderComponent_2)
+                          .where({ ManufacturingOrder: matched.ManufacturingOrder })
+                );
+
+                const statuses = await sapOrderSrv.run(
+                    SELECT.from(A_ProductionOrderStatus_2)
+                          .where({ ManufacturingOrder: matched.ManufacturingOrder })
+                );
+                sapStatusCodes = (statuses || [])
+                    .map(s => (s.StatusShortName || '').trim())
+                    .filter(Boolean);
+            } catch (err) {
+                console.warn('[SAP] ATP data unavailable from SAP:', err.message);
+            }
+
+            for (const comp of sapComponents) {
+                const reqQty = parseFloat(comp.RequiredQuantity) || 0;
+                const confQty = parseFloat(comp.ConfirmedAvailableQuantity) || 0;
+                if (confQty < reqQty) {
+                    shortageCount++;
+                }
+            }
+
+            const sapSaysMissingParts = sapStatusCodes.includes('MSPT') || shortageCount > 0;
+            const notifMsg = `Material availability check completed for Order ${matched.ManufacturingOrder}. SAP status: ${sapStatusCodes.join(', ') || 'N/A'}. Shortage count: ${shortageCount}.`;
+
+            await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+                type: sapSaysMissingParts ? 'ALERT' : 'INFO',
+                order_ID: orderId,
+                message: notifMsg,
+                isRead: false
+            });
+
+            return { success: true, shortageCount };
+        });
+
+        // ================================================================
         // ACTION: Release Production Order (POST to SAP)
         // ================================================================
         this.on('releaseOrder', async (req) => {

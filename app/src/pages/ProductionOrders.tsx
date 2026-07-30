@@ -1,19 +1,29 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Plus, Filter, Calendar, Layers } from 'lucide-react';
 
 export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterStatus, setFilterStatus] = useState<string>(() => {
+    return location.state?.status || 'ALL';
+  });
   const [filterPlant, setFilterPlant] = useState('ALL');
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
+
+  React.useEffect(() => {
+    if (location.state?.status) {
+      setFilterStatus(location.state.status);
+    }
+  }, [location.state]);
 
   // Creation form state
   const [materialId, setMaterialId] = useState('');

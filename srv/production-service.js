@@ -164,6 +164,62 @@ export default class ProductionService extends cds.ApplicationService {
 
             // Fetch list of orders from SAP in real time
             const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).orderBy('ManufacturingOrder desc').limit(100));
+            const orderNumbers = sapOrders.map(o => o.ManufacturingOrder).filter(Boolean);
+
+            // Fetch operations for all orders in bulk
+            const sapOps = orderNumbers.length 
+                ? await sapOrderSrv.run(SELECT.from(A_ProductionOrderOperation_2).where({ ManufacturingOrder: { in: orderNumbers } }))
+                : [];
+            const opsByOrder = {};
+            for (const op of sapOps) {
+                if (!opsByOrder[op.ManufacturingOrder]) opsByOrder[op.ManufacturingOrder] = [];
+                const orderStatus = deriveOrderStatus(sapOrders.find(o => o.ManufacturingOrder === op.ManufacturingOrder));
+                opsByOrder[op.ManufacturingOrder].push({
+                    ID: uuid(`${op.ManufacturingOrder}-OP-${op.ManufacturingOrderOperation}`),
+                    order_ID: uuid(op.ManufacturingOrder),
+                    sequence: parseInt(op.ManufacturingOrderOperation) || 0,
+                    workCenter_ID: uuid(op.WorkCenter),
+                    workCenter: {
+                        ID: uuid(op.WorkCenter),
+                        code: op.WorkCenter,
+                        name: `Work Center ${op.WorkCenter}`
+                    },
+                    description: op.MfgOrderOperationText || `Operation ${op.ManufacturingOrderOperation}`,
+                    standardTime: parseFloat(op.WorkCenterStandardWorkQty1) || 0,
+                    timeUnit: op.WorkCenterStandardWorkQtyUnit1 || 'MIN',
+                    confirmedTime: parseFloat(op.WorkCenterStandardWorkQty1) || 0,
+                    yieldQty: parseFloat(op.OpTotalConfirmedYieldQty) || 0,
+                    scrapQty: 0,
+                    status: deriveOperationStatus(op, orderStatus)
+                });
+            }
+
+            // Fetch components for all orders in bulk
+            const sapComps = orderNumbers.length 
+                ? await sapOrderSrv.run(SELECT.from(A_ProductionOrderComponent_2).where({ ManufacturingOrder: { in: orderNumbers } }))
+                : [];
+            const compsByOrder = {};
+            for (const comp of sapComps) {
+                if (!compsByOrder[comp.ManufacturingOrder]) compsByOrder[comp.ManufacturingOrder] = [];
+                compsByOrder[comp.ManufacturingOrder].push({
+                    ID: uuid(`${comp.ManufacturingOrder}-COMP-${comp.Reservation}-${comp.ReservationItem}`),
+                    order_ID: uuid(comp.ManufacturingOrder),
+                    componentMaterial_ID: uuid(comp.Material),
+                    componentMaterial: {
+                        ID: uuid(comp.Material),
+                        code: comp.Material,
+                        description: `Component ${comp.Material}`,
+                        materialGroup: 'COMPONENT',
+                        baseUnit: comp.BaseUnit || 'PC'
+                    },
+                    requiredQty: parseFloat(comp.RequiredQuantity) || 0,
+                    issuedQty: parseFloat(comp.WithdrawnQuantity) || 0,
+                    unit: comp.BaseUnit || 'PC',
+                    isBackflushed: !!comp.MatlCompIsMarkedForBackflush,
+                    status: deriveComponentStatus(comp)
+                });
+            }
+
             const mappedList = [];
 
             for (const sapOrder of sapOrders) {
@@ -202,7 +258,9 @@ export default class ProductionService extends cds.ApplicationService {
                         ID: slocId,
                         code: sapOrder.StorageLocation,
                         name: `Storage ${sapOrder.StorageLocation}`
-                    }
+                    },
+                    operations: opsByOrder[sapOrder.ManufacturingOrder] || [],
+                    components: compsByOrder[sapOrder.ManufacturingOrder] || []
                 });
             }
 

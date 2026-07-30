@@ -9,7 +9,11 @@ export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
+  const [filterPlant, setFilterPlant] = useState('ALL');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
 
   // Creation form state
   const [materialId, setMaterialId] = useState('');
@@ -113,9 +117,30 @@ export const ProductionOrders: React.FC = () => {
     });
   };
 
-  const filteredOrders = filterStatus === 'ALL' 
-    ? orders 
-    : orders?.filter((o: any) => o.status === filterStatus);
+  const filteredOrders = orders?.filter((o: any) => {
+    // 1. Status Filter
+    if (filterStatus !== 'ALL' && o.status !== filterStatus) return false;
+
+    // 2. Plant Filter
+    if (filterPlant !== 'ALL' && o.plant_ID !== filterPlant) return false;
+
+    // 3. Date Filters
+    if (filterStartDate && o.plannedStartDate && o.plannedStartDate < filterStartDate) return false;
+    if (filterEndDate && o.plannedEndDate && o.plannedEndDate > filterEndDate) return false;
+
+    // 4. Search query matching orderNumber, material code/description, plant code/name
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchOrder = o.orderNumber?.toLowerCase().includes(q);
+      const matchMatCode = o.material?.code?.toLowerCase().includes(q);
+      const matchMatDesc = o.material?.description?.toLowerCase().includes(q);
+      const matchPlant = o.plant?.code?.toLowerCase().includes(q) || o.plant?.name?.toLowerCase().includes(q);
+      
+      if (!matchOrder && !matchMatCode && !matchMatDesc && !matchPlant) return false;
+    }
+
+    return true;
+  });
 
   if (ordersLoading) {
     return (
@@ -235,33 +260,154 @@ export const ProductionOrders: React.FC = () => {
 
       {/* Filter and Table Panel */}
       <div className="sap-card">
-        {/* Filter Bar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', fontWeight: 600, color: '#555' }}>
-            <Filter size={16} />
-            <span>Filter Status:</span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
-              <button
-                key={st}
-                onClick={() => setFilterStatus(st)}
-                style={{
-                  padding: '4px 10px',
-                  borderRadius: '12px',
-                  border: '1px solid #ced4da',
-                  backgroundColor: filterStatus === st ? '#0a6ed1' : '#ffffff',
-                  color: filterStatus === st ? '#ffffff' : '#495057',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s'
-                }}
+        {/* Advanced Search & Filtering Panel */}
+        <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderBottom: '1px solid var(--sap-border-color)', paddingBottom: '1.25rem' }}>
+          
+          {/* Controls Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', alignItems: 'end' }}>
+            
+            {/* Universal Search */}
+            <div className="sap-form-group" style={{ marginBottom: 0 }}>
+              <label className="sap-label">Search Orders</label>
+              <input 
+                type="text" 
+                className="sap-input" 
+                placeholder="Order #, Material, Plant..." 
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {/* Plant Filter */}
+            <div className="sap-form-group" style={{ marginBottom: 0 }}>
+              <label className="sap-label">Filter by Plant</label>
+              <select 
+                className="sap-input" 
+                value={filterPlant} 
+                onChange={e => setFilterPlant(e.target.value)}
               >
-                {st}
-              </button>
-            ))}
+                <option value="ALL">All Plants</option>
+                {plants?.map((p: any) => (
+                  <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range Start */}
+            <div className="sap-form-group" style={{ marginBottom: 0 }}>
+              <label className="sap-label">Start Date</label>
+              <div style={{ position: 'relative' }}>
+                <input 
+                  type="date" 
+                  className="sap-input" 
+                  value={filterStartDate}
+                  onChange={e => setFilterStartDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Date Range End */}
+            <div className="sap-form-group" style={{ marginBottom: 0 }}>
+              <label className="sap-label">End Date</label>
+              <div style={{ position: 'relative' }}>
+                <input 
+                  type="date" 
+                  className="sap-input" 
+                  value={filterEndDate}
+                  onChange={e => setFilterEndDate(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Reset Button */}
+            <button 
+              type="button" 
+              className="sap-btn sap-btn-secondary"
+              style={{ height: '36px' }}
+              onClick={() => {
+                setSearchQuery('');
+                setFilterStatus('ALL');
+                setFilterPlant('ALL');
+                setFilterStartDate('');
+                setFilterEndDate('');
+              }}
+            >
+              Reset Filters
+            </button>
           </div>
+
+          {/* Status Filters Toggle Row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--sap-text-secondary)' }}>
+              <Filter size={14} />
+              <span>Status:</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setFilterStatus(st)}
+                  style={{
+                    padding: '3px 8px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--sap-border-color)',
+                    backgroundColor: filterStatus === st ? 'var(--sap-brand-color)' : 'var(--sap-surface-color)',
+                    color: filterStatus === st ? '#ffffff' : 'var(--sap-text-color)',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all var(--transition-fast)'
+                  }}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Active Filter Chips / Tags */}
+          {(searchQuery || filterStatus !== 'ALL' || filterPlant !== 'ALL' || filterStartDate || filterEndDate) && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.25rem' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--sap-text-secondary)' }}>Active Filters:</span>
+              
+              {searchQuery && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  Query: "{searchQuery}"
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setSearchQuery('')}>×</span>
+                </span>
+              )}
+
+              {filterStatus !== 'ALL' && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  Status: {filterStatus}
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterStatus('ALL')}>×</span>
+                </span>
+              )}
+
+              {filterPlant !== 'ALL' && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  Plant: {plants?.find((p: any) => p.ID === filterPlant)?.code}
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterPlant('ALL')}>×</span>
+                </span>
+              )}
+
+              {filterStartDate && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  From: {filterStartDate}
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterStartDate('')}>×</span>
+                </span>
+              )}
+
+              {filterEndDate && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  To: {filterEndDate}
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterEndDate('')}>×</span>
+                </span>
+              )}
+            </div>
+          )}
+
         </div>
 
         {/* Table */}

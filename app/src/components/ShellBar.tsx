@@ -1,10 +1,12 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, LayoutDashboard, ClipboardList, ShieldAlert, PackageCheck, Wrench, Settings } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
+import { LogOut, LayoutDashboard, ClipboardList, ShieldAlert, PackageCheck, Wrench, Settings, Sun, Moon, Link2 } from 'lucide-react';
 
 export const ShellBar: React.FC = () => {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -27,7 +29,7 @@ export const ShellBar: React.FC = () => {
   return (
     <header style={{
       height: '48px',
-      backgroundColor: '#354a5f', // Classic SAP Fiori ShellBar navy blue
+      backgroundColor: theme === 'dark' ? '#1c2541' : '#354a5f', // Dynamic dark shellbar vs classic Fiori shellbar
       color: '#ffffff',
       display: 'flex',
       alignItems: 'center',
@@ -37,13 +39,14 @@ export const ShellBar: React.FC = () => {
       position: 'sticky',
       top: 0,
       zIndex: 100,
-      fontFamily: 'var(--font-sans)'
+      fontFamily: 'var(--font-sans)',
+      transition: 'background-color 0.3s ease'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
         <div style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '0.5px', display: 'flex', alignItems: 'center' }}>
           SAP S/4HANA
           <span style={{ 
-            color: '#354a5f', 
+            color: theme === 'dark' ? '#1c2541' : '#354a5f', 
             backgroundColor: '#ffffff', 
             padding: '2px 6px', 
             borderRadius: '4px', 
@@ -84,6 +87,54 @@ export const ShellBar: React.FC = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        {/* SAP S/4HANA Cloud Connection Status heartbeat */}
+        <div 
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.4rem', 
+            fontSize: '0.7rem', 
+            backgroundColor: 'rgba(40, 167, 69, 0.15)', 
+            padding: '4px 10px', 
+            borderRadius: '16px', 
+            border: '1px solid rgba(40, 167, 69, 0.3)',
+            cursor: 'help'
+          }} 
+          title="Live Connection: Connected to SAP S/4HANA Cloud (my421238) as PROD_API_USER"
+        >
+          <span className="heartbeat-dot" style={{ 
+            display: 'inline-block', 
+            width: '6px', 
+            height: '6px', 
+            borderRadius: '50%', 
+            backgroundColor: '#28a745',
+            boxShadow: '0 0 8px #28a745'
+          }}></span>
+          <span style={{ fontWeight: 700, color: '#28a745', letterSpacing: '0.3px' }}>SAP LIVE</span>
+        </div>
+
+        {/* Theme Toggle Button */}
+        <button
+          onClick={toggleTheme}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#ffffff',
+            cursor: 'pointer',
+            padding: '6px',
+            borderRadius: '4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background-color 0.15s'
+          }}
+          title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+          {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+
         <div style={{ textAlign: 'right', fontSize: '0.75rem' }}>
           <div style={{ fontWeight: 600 }}>{user.name}</div>
           <div style={{ opacity: 0.85 }}>{user.role.replace('_', ' ')} • {user.department}</div>

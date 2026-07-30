@@ -9,6 +9,7 @@ export default class ProductionService extends cds.ApplicationService {
 
         const {
             A_ProductionOrder_2,
+            A_ProductionOrderItem_2,
             A_ProductionOrderOperation_2,
             A_ProductionOrderComponent_2,
             A_ProductionOrderStatus_2
@@ -67,6 +68,10 @@ export default class ProductionService extends cds.ApplicationService {
 
             const sapOps = await sapOrderSrv.run(SELECT.from(A_ProductionOrderOperation_2).where({ ManufacturingOrder: orderNumber }));
             const sapComps = await sapOrderSrv.run(SELECT.from(A_ProductionOrderComponent_2).where({ ManufacturingOrder: orderNumber }));
+            
+            // Query item for true delivered qty
+            const [sapItem] = await sapOrderSrv.run(SELECT.from(A_ProductionOrderItem_2).where({ ManufacturingOrder: orderNumber }));
+            const deliveredQty = parseFloat(sapItem?.MfgOrderItemActualDeliveredQty) || 0;
 
             const orderStatus = deriveOrderStatus(sapOrder);
             const plantId = uuid(sapOrder.ProductionPlant);
@@ -81,7 +86,7 @@ export default class ProductionService extends cds.ApplicationService {
                 storageLocation_ID: slocId,
                 targetQty: parseFloat(sapOrder.TotalQuantity) || 0,
                 confirmedQty: parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
-                deliveredQty: parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0, // Fallback delivered qty
+                deliveredQty: deliveredQty,
                 status: orderStatus,
                 plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                 plannedEndDate: sapOrder.MfgOrderPlannedEndDate || null,
@@ -220,6 +225,15 @@ export default class ProductionService extends cds.ApplicationService {
                 });
             }
 
+            // Fetch items for all orders in bulk to read actual delivered quantity
+            const sapItems = orderNumbers.length
+                ? await sapOrderSrv.run(SELECT.from(A_ProductionOrderItem_2).where({ ManufacturingOrder: { in: orderNumbers } }))
+                : [];
+            const itemsByOrder = {};
+            for (const item of sapItems) {
+                itemsByOrder[item.ManufacturingOrder] = item;
+            }
+
             const mappedList = [];
 
             for (const sapOrder of sapOrders) {
@@ -236,7 +250,7 @@ export default class ProductionService extends cds.ApplicationService {
                     storageLocation_ID: slocId,
                     targetQty: parseFloat(sapOrder.TotalQuantity) || 0,
                     confirmedQty: parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
-                    deliveredQty: parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
+                    deliveredQty: parseFloat(itemsByOrder[sapOrder.ManufacturingOrder]?.MfgOrderItemActualDeliveredQty) || 0,
                     status: orderStatus,
                     plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                     plannedEndDate: sapOrder.MfgOrderPlannedEndDate || null,

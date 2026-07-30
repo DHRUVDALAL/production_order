@@ -353,7 +353,7 @@ export const ProductionOrders: React.FC = () => {
               <span>Status:</span>
             </div>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
+              {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
                 <button
                   key={st}
                   type="button"

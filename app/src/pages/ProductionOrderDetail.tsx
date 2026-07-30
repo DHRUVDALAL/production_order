@@ -123,10 +123,14 @@ export const ProductionOrderDetail: React.FC = () => {
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
   // Determine stage index for progress bar
-  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'];
-  let currentStageIndex = statusFlow.indexOf(order.status);
-  if (order.status === 'GMPS') currentStageIndex = statusFlow.indexOf('GI');
-  if (order.status === 'PDLV' || order.status === 'DLV') currentStageIndex = statusFlow.indexOf('GR');
+  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
+  let mappedStatus = order.status;
+  if (order.status === 'STRT') mappedStatus = 'REL';
+  if (order.status === 'INSP') mappedStatus = 'CNF';
+  if (order.status === 'GMPS') mappedStatus = 'GI';
+  if (order.status === 'PDLV' || order.status === 'DLV') mappedStatus = 'GR';
+
+  let currentStageIndex = statusFlow.indexOf(mappedStatus);
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>

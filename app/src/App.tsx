@@ -59,13 +59,13 @@ function App() {
           } />
 
           <Route path="/quality" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'QUAL_INSPECTOR', 'PLANT_SUPV']}>
+            <RouteGuard allowedRoles={['SYS_ADMIN', 'QUAL_INSPECTOR', 'PLANT_SUPV', 'PROD_PLANNER']}>
               <AppLayout><QualityInspection /></AppLayout>
             </RouteGuard>
           } />
 
           <Route path="/inventory" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR']}>
+            <RouteGuard allowedRoles={['SYS_ADMIN', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'PROD_PLANNER']}>
               <AppLayout><Inventory /></AppLayout>
             </RouteGuard>
           } />

@@ -339,7 +339,7 @@ export default class ProductionService extends cds.ApplicationService {
         // READ: WorkCenters
         // ================================================================
         this.on('READ', 'WorkCenters', async (req) => {
-            const sapOps = await sapOrderSrv.run(SELECT.from(A_ProductionOrderOperation_2).columns('WorkCenter').limit(100));
+            const sapOps = await sapOrderSrv.run(SELECT.from(A_ProductionOrderOperation_2).columns('WorkCenter').limit(1000));
             const uniqueWcs = [...new Set(sapOps.map(op => op.WorkCenter).filter(Boolean))];
             return uniqueWcs.map(code => ({
                 ID: uuid(code),

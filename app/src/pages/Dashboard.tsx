@@ -142,27 +142,48 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : (
               recentAlerts.map((n: any) => (
-                <div key={n.ID} style={{
-                  display: 'flex',
-                  gap: '0.75rem',
-                  padding: '0.75rem',
-                  backgroundColor: n.type === 'ALERT' ? '#fff9db' : '#f8f9fa',
-                  border: `1px solid ${n.type === 'ALERT' ? '#ffe066' : '#dee2e6'}`,
-                  borderRadius: '6px',
-                  fontSize: '0.85rem'
-                }}>
-                  {n.type === 'ALERT' ? (
-                    <AlertTriangle size={18} color="#f08c00" style={{ flexShrink: 0 }} />
-                  ) : (
-                    <Bell size={18} color="#0a6ed1" style={{ flexShrink: 0 }} />
-                  )}
-                  <div>
-                    <div style={{ fontWeight: 600, color: '#333' }}>
-                      Order {n.order?.orderNumber || 'Unknown'}
+                <Link 
+                  key={n.ID} 
+                  to="/operations" 
+                  state={{ search: n.order?.orderNumber }}
+                  style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
+                >
+                  <div 
+                    style={{
+                      display: 'flex',
+                      gap: '0.75rem',
+                      padding: '0.75rem',
+                      backgroundColor: n.type === 'ALERT' ? '#fff9db' : '#f8f9fa',
+                      border: `1px solid ${n.type === 'ALERT' ? '#ffe066' : '#dee2e6'}`,
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = n.type === 'ALERT' ? '#f08c00' : '#0a6ed1';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                      e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = n.type === 'ALERT' ? '#ffe066' : '#dee2e6';
+                      e.currentTarget.style.transform = 'none';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    {n.type === 'ALERT' ? (
+                      <AlertTriangle size={18} color="#f08c00" style={{ flexShrink: 0 }} />
+                    ) : (
+                      <Bell size={18} color="#0a6ed1" style={{ flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#333' }}>
+                        Order {n.order?.orderNumber || 'Unknown'}
+                      </div>
+                      <div style={{ color: '#555', marginTop: '0.2rem' }}>{n.message}</div>
                     </div>
-                    <div style={{ color: '#555', marginTop: '0.2rem' }}>{n.message}</div>
                   </div>
-                </div>
+                </Link>
               ))
             )}
           </div>

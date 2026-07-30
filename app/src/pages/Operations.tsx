@@ -1,20 +1,30 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Wrench, CheckCircle2, Play, AlertCircle } from 'lucide-react';
 
 export const Operations: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const location = useLocation();
   
   // Selected operation for confirmation
   const [selectedOp, setSelectedOp] = useState<any>(null);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   
   // Search & Filter State
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState<string>(() => {
+    return location.state?.search || '';
+  });
   const [statusFilter, setStatusFilter] = useState('ALL');
+
+  React.useEffect(() => {
+    if (location.state?.search) {
+      setSearchQuery(location.state.search);
+    }
+  }, [location.state]);
   
   // Confirmation form state
   const [yieldQty, setYieldQty] = useState('100');

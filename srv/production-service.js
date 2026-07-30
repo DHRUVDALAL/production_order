@@ -361,14 +361,19 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, 'Order Target Quantity must be greater than zero.');
             }
 
-            // Resolve plant code and material code dynamically
-            const plantRecord = await SELECT.one.from('sap.production.portal.Plants').where({ ID: order.plant_ID });
-            const matRecord = await SELECT.one.from('sap.production.portal.Materials').where({ ID: order.material_ID });
-            const slocRecord = order.storageLocation_ID ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: order.storageLocation_ID }) : null;
+            // Resolve plant code, material code, and storage location code dynamically from live SAP data
+            const sapOrders = await sapOrderSrv.run(
+                SELECT.from(A_ProductionOrder_2).columns('ProductionPlant', 'Material', 'StorageLocation').limit(100)
+            );
 
-            const plantCode = plantRecord?.code || 'PL01';
-            const matCode = matRecord?.code || 'MAT01';
-            const slocCode = slocRecord?.code || '';
+            const matchedPlant = sapOrders.find(o => uuid(o.ProductionPlant) === order.plant_ID);
+            const plantCode = matchedPlant ? matchedPlant.ProductionPlant : '1105'; // Default fallback
+
+            const matchedMat = sapOrders.find(o => uuid(o.Material) === order.material_ID);
+            const matCode = matchedMat ? matchedMat.Material : 'RP/24-012-02.K'; // Default fallback
+
+            const matchedSloc = sapOrders.find(o => uuid(`${o.ProductionPlant}-${o.StorageLocation}`) === order.storageLocation_ID);
+            const slocCode = matchedSloc ? matchedSloc.StorageLocation : 'RAW1'; // Default fallback
 
             if (order.status === 'CRTD') {
                 const payload = {

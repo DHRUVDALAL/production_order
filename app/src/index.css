@@ -44,33 +44,6 @@
   --transition-fast: 0.15s ease;
 }
 
-[data-theme='dark'] {
-  --sap-bg-color: #0b132b;
-  --sap-surface-color: #1c2541;
-  --sap-surface-elevated: #2a3454;
-  --sap-border-color: #3b4566;
-  --sap-text-color: #f8f9fa;
-  --sap-text-secondary: #cbd5e1;
-  --sap-brand-color: #4dabf7;
-  --sap-brand-hover-color: #339af0;
-  
-  /* Form components override for dark mode */
-  input, select, textarea {
-    background-color: #1c2541 !important;
-    color: #f8f9fa !important;
-    border-color: #3b4566 !important;
-  }
-  
-  .sap-table th {
-    background-color: #242f50 !important;
-    color: #cbd5e1 !important;
-  }
-  
-  .sap-table tr:hover td {
-    background-color: #242f50 !important;
-  }
-}
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -84,7 +57,6 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Scrollbar styling */

@@ -742,6 +742,84 @@ export default class ProductionService extends cds.ApplicationService {
             }
         });
 
+        // ================================================================
+        // ACTION: Record Quality Inspection Usage Decision
+        // ================================================================
+        this.on('submitUsageDecision', async (req) => {
+            const { lotId, approvedQty, rejectedQty, usageDecision } = req.data;
+
+            const lot = await SELECT.one.from('sap.production.portal.QualityInspectionLots').where({ ID: lotId });
+            if (!lot) return req.error(404, `Inspection Lot ${lotId} not found.`);
+
+            if (lot.status === 'COMP') {
+                return req.error(400, 'Usage decision has already been submitted for this inspection lot.');
+            }
+
+            const totalPost = parseFloat(approvedQty) + parseFloat(rejectedQty);
+            if (totalPost !== parseFloat(lot.lotQty)) {
+                return req.error(400, `Sum of Approved (${approvedQty}) and Rejected (${rejectedQty}) must equal Inspection Lot quantity (${lot.lotQty}).`);
+            }
+
+            await UPDATE('sap.production.portal.QualityInspectionLots')
+                .set({ status: 'COMP', approvedQty, rejectedQty, usageDecision, decisionDate: new Date().toISOString() })
+                .where({ ID: lot.ID });
+
+            // Retrieve S/4HANA Order number for matching
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).limit(100));
+            const matchedOrder = sapOrders.find(o => uuid(o.ManufacturingOrder) === lot.order_ID);
+            if (!matchedOrder) {
+                return req.error(404, `SAP Production Order not found for lot.`);
+            }
+
+            if (usageDecision === 'UDAC') {
+                await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+                    type    : 'INFO',
+                    order_ID: lot.order_ID,
+                    message : `Quality Inspection approved. Production Order ${matchedOrder.ManufacturingOrder} is released for Goods Receipt.`,
+                    isRead  : false
+                });
+            } else {
+                // Post rejection to SAP as blocked stock (Movement Type 350)
+                try {
+                    const today = new Date().toISOString().split('T')[0];
+                    const payload = {
+                        DocumentDate  : today,
+                        PostingDate   : today,
+                        MaterialDocumentHeaderText: 'Portal QM Rejection',
+                        GoodsMovementCode: '05', // Production GR/GI
+                        to_MaterialDocumentItem: [{
+                            Material           : matchedOrder.Material,
+                            Plant              : matchedOrder.ProductionPlant,
+                            StorageLocation    : matchedOrder.StorageLocation || 'RAW1',
+                            GoodsMovementType  : '350', // Transfer posting Quality to Blocked
+                            QuantityInEntryUnit: parseFloat(rejectedQty),
+                            EntryUnit          : 'PC',
+                            ManufacturingOrder : matchedOrder.ManufacturingOrder,
+                            GoodsMovementRefDocType: 'F',
+                            MaterialDocumentItemText: `QM Rejection via Portal`
+                        }]
+                    };
+
+                    await sapMatDocSrv.post(A_MaterialDocumentHeader, payload);
+                } catch (err) {
+                    console.error('[SAP] QM Block 350 posting failed:', err.message);
+                    return req.error(500, `SAP Blocked Stock Error: ${err.message}`);
+                }
+
+                // Complete/TECO order in SAP
+                await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, matchedOrder.ManufacturingOrder);
+
+                await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+                    type    : 'ALERT',
+                    order_ID: lot.order_ID,
+                    message : `Quality Inspection failed. ${rejectedQty} units posted to blocked stock. Order ${matchedOrder.ManufacturingOrder} technically completed (TECO).`,
+                    isRead  : false
+                });
+            }
+
+            return { success: true, status: 'COMP' };
+        });
+
         await super.init();
     }
 

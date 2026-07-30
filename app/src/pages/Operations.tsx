@@ -12,6 +12,10 @@ export const Operations: React.FC = () => {
   const [selectedOp, setSelectedOp] = useState<any>(null);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
   
+  // Search & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  
   // Confirmation form state
   const [yieldQty, setYieldQty] = useState('100');
   const [scrapQty, setScrapQty] = useState('0');
@@ -89,6 +93,23 @@ export const Operations: React.FC = () => {
     });
   };
 
+  const filteredActiveOrders = activeOrders?.filter((order: any) => {
+    // 1. Status Filter
+    if (statusFilter !== 'ALL' && order.status !== statusFilter) return false;
+
+    // 2. Search query matching orderNumber, material code, or material description
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchOrder = order.orderNumber?.toLowerCase().includes(q);
+      const matchMatCode = order.material?.code?.toLowerCase().includes(q);
+      const matchMatDesc = order.material?.description?.toLowerCase().includes(q);
+      
+      if (!matchOrder && !matchMatCode && !matchMatDesc) return false;
+    }
+
+    return true;
+  }) || [];
+
   if (isLoading) {
     return (
       <div style={{ 
@@ -122,16 +143,55 @@ export const Operations: React.FC = () => {
       )}
 
 
+      {/* Search & Filter Panel */}
+      <div className="sap-card" style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'end' }}>
+        <div className="sap-form-group" style={{ marginBottom: 0, flex: 1, minWidth: '250px' }}>
+          <label className="sap-label">Search Active Orders</label>
+          <input 
+            type="text" 
+            className="sap-input" 
+            placeholder="Search Order #, material code/description..." 
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+        
+        <div className="sap-form-group" style={{ marginBottom: 0, width: '200px' }}>
+          <label className="sap-label">Status Filter</label>
+          <select 
+            className="sap-input" 
+            value={statusFilter} 
+            onChange={e => setStatusFilter(e.target.value)}
+          >
+            <option value="ALL">All Active Orders</option>
+            <option value="STRT">Started (STRT)</option>
+            <option value="PCNF">Partially Confirmed (PCNF)</option>
+          </select>
+        </div>
+
+        <button 
+          type="button" 
+          className="sap-btn sap-btn-secondary" 
+          style={{ height: '36px' }}
+          onClick={() => {
+            setSearchQuery('');
+            setStatusFilter('ALL');
+          }}
+        >
+          Reset Filters
+        </button>
+      </div>
+
       {/* Grid list of active orders & operations */}
-      {activeOrders.length === 0 ? (
+      {filteredActiveOrders.length === 0 ? (
         <div className="sap-card" style={{ padding: '3rem', textAlign: 'center', color: '#666' }}>
           <AlertCircle size={32} color="#666" style={{ marginBottom: '0.5rem', display: 'inline' }} />
-          <div style={{ marginTop: '0.5rem' }}>No production orders are currently in active shop floor execution.</div>
-          <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>Go to Production Orders to release and start orders first.</div>
+          <div style={{ marginTop: '0.5rem' }}>No active production orders found matching filters.</div>
+          <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>Try clearing filters or release/start orders in the Production Orders page.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          {activeOrders.map((order: any) => (
+          {filteredActiveOrders.map((order: any) => (
             <div className="sap-card" key={order.ID}>
               <div className="sap-card-header">
                 <div>

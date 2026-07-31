@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, Filter, Calendar, Layers } from 'lucide-react';
+import { Plus, Filter, Calendar, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
@@ -18,6 +18,9 @@ export const ProductionOrders: React.FC = () => {
   const [filterPlant, setFilterPlant] = useState('ALL');
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [sortField, setSortField] = useState<string>('orderNumber');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   React.useEffect(() => {
     if (location.state?.status) {
@@ -77,7 +80,7 @@ export const ProductionOrders: React.FC = () => {
       const res = await api.post('/odata/v4/production/ProductionOrders', newOrder);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['ordersList'] });
       setShowCreateForm(false);
       // Reset form
@@ -88,6 +91,13 @@ export const ProductionOrders: React.FC = () => {
       setPlannedStartDate('');
       setPlannedEndDate('');
       setFormError('');
+      
+      // Show success toast
+      setToast({
+        message: `Production Order ${data.orderNumber || ''} created successfully in SAP S/4HANA!`,
+        type: 'success'
+      });
+      setTimeout(() => setToast(null), 5000);
     },
     onError: (err: any) => {
       const errMsg = err.response?.data?.error?.message || 'Failed to create order.';
@@ -150,6 +160,67 @@ export const ProductionOrders: React.FC = () => {
     }
 
     return true;
+  });
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const renderSortIcon = (field: string) => {
+    if (sortField !== field) return <ArrowUpDown size={12} style={{ marginLeft: '6px', opacity: 0.5, verticalAlign: 'middle' }} />;
+    return sortDirection === 'asc' 
+      ? <ArrowUp size={12} style={{ marginLeft: '6px', color: '#0a6ed1', verticalAlign: 'middle' }} /> 
+      : <ArrowDown size={12} style={{ marginLeft: '6px', color: '#0a6ed1', verticalAlign: 'middle' }} />;
+  };
+
+  // Sort the filtered orders
+  const sortedOrders = [...(filteredOrders || [])].sort((a: any, b: any) => {
+    let aVal: any = '';
+    let bVal: any = '';
+
+    if (sortField === 'orderNumber') {
+      aVal = a.orderNumber || '';
+      bVal = b.orderNumber || '';
+    } else if (sortField === 'material') {
+      aVal = a.material?.code || '';
+      bVal = b.material?.code || '';
+    } else if (sortField === 'plant') {
+      aVal = a.plant?.code || '';
+      bVal = b.plant?.code || '';
+    } else if (sortField === 'targetQty') {
+      aVal = parseFloat(a.targetQty) || 0;
+      bVal = parseFloat(b.targetQty) || 0;
+    } else if (sortField === 'confirmedQty') {
+      aVal = parseFloat(a.confirmedQty) || 0;
+      bVal = parseFloat(b.confirmedQty) || 0;
+    } else if (sortField === 'deliveredQty') {
+      aVal = parseFloat(a.deliveredQty) || 0;
+      bVal = parseFloat(b.deliveredQty) || 0;
+    } else if (sortField === 'status') {
+      aVal = a.status || '';
+      bVal = b.status || '';
+    } else if (sortField === 'plannedStartDate') {
+      aVal = a.plannedStartDate || '';
+      bVal = b.plannedStartDate || '';
+    } else if (sortField === 'plannedEndDate') {
+      aVal = a.plannedEndDate || '';
+      bVal = b.plannedEndDate || '';
+    }
+
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    } else {
+      aVal = String(aVal).toLowerCase();
+      bVal = String(bVal).toLowerCase();
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    }
   });
 
   if (ordersLoading) {
@@ -425,25 +496,43 @@ export const ProductionOrders: React.FC = () => {
           <table className="sap-table">
             <thead>
               <tr>
-                <th>Order Number</th>
-                <th>Header Material</th>
-                <th>Plant</th>
-                <th>Target Qty</th>
-                <th>Confirmed Qty</th>
-                <th>Delivered Qty</th>
-                <th>Status</th>
-                <th>Planned Start</th>
-                <th>Planned End</th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderNumber')}>
+                  Order Number {renderSortIcon('orderNumber')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('material')}>
+                  Header Material {renderSortIcon('material')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plant')}>
+                  Plant {renderSortIcon('plant')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('targetQty')}>
+                  Target Qty {renderSortIcon('targetQty')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('confirmedQty')}>
+                  Confirmed Qty {renderSortIcon('confirmedQty')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('deliveredQty')}>
+                  Delivered Qty {renderSortIcon('deliveredQty')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('status')}>
+                  Status {renderSortIcon('status')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plannedStartDate')}>
+                  Planned Start {renderSortIcon('plannedStartDate')}
+                </th>
+                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plannedEndDate')}>
+                  Planned End {renderSortIcon('plannedEndDate')}
+                </th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredOrders?.length === 0 ? (
+              {sortedOrders.length === 0 ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', color: '#888', padding: '2rem' }}>No production orders found matching filter.</td>
                 </tr>
               ) : (
-                filteredOrders?.map((o: any) => (
+                sortedOrders.map((o: any) => (
                   <tr key={o.ID}>
                     <td style={{ fontWeight: 600, color: '#0a6ed1' }}>
                       <Link to={`/orders/${o.ID}`} style={{ textDecoration: 'none', color: 'inherit' }}>{o.orderNumber}</Link>
@@ -473,6 +562,53 @@ export const ProductionOrders: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <>
+          <style>{`
+            @keyframes slideIn {
+              from { transform: translateY(-100px); opacity: 0; }
+              to { transform: translateY(0); opacity: 1; }
+            }
+          `}</style>
+          <div style={{
+            position: 'fixed',
+            top: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9999,
+            backgroundColor: toast.type === 'success' ? '#10b981' : '#ef4444',
+            color: '#ffffff',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            fontWeight: 500,
+            fontSize: '0.9rem',
+            animation: 'slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}>
+            <span>{toast.message}</span>
+            <button 
+              onClick={() => setToast(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#ffffff',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                fontSize: '1.2rem',
+                padding: '0 4px',
+                lineHeight: 1
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

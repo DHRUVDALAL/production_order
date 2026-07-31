@@ -21,6 +21,7 @@ export const ProductionOrders: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [sortField, setSortField] = useState<string>('orderNumber');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [sortPreset, setSortPreset] = useState<string>('newest');
 
   React.useEffect(() => {
     if (location.state?.status) {
@@ -162,7 +163,37 @@ export const ProductionOrders: React.FC = () => {
     return true;
   });
 
+  const handleSortPresetChange = (preset: string) => {
+    setSortPreset(preset);
+    if (preset === 'newest') {
+      setSortField('orderNumber');
+      setSortDirection('desc');
+    } else if (preset === 'oldest') {
+      setSortField('orderNumber');
+      setSortDirection('asc');
+    } else if (preset === 'qty-desc') {
+      setSortField('targetQty');
+      setSortDirection('desc');
+    } else if (preset === 'qty-asc') {
+      setSortField('targetQty');
+      setSortDirection('asc');
+    } else if (preset === 'deliv-desc') {
+      setSortField('deliveredQty');
+      setSortDirection('desc');
+    } else if (preset === 'start-asc') {
+      setSortField('plannedStartDate');
+      setSortDirection('asc');
+    } else if (preset === 'start-desc') {
+      setSortField('plannedStartDate');
+      setSortDirection('desc');
+    } else if (preset === 'status') {
+      setSortField('status');
+      setSortDirection('asc');
+    }
+  };
+
   const handleSort = (field: string) => {
+    setSortPreset('custom');
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -400,6 +431,26 @@ export const ProductionOrders: React.FC = () => {
               </div>
             </div>
 
+            {/* Sort Orders Preset Dropdown */}
+            <div className="sap-form-group" style={{ marginBottom: 0 }}>
+              <label className="sap-label">Sort Orders</label>
+              <select 
+                className="sap-input" 
+                value={sortPreset} 
+                onChange={e => handleSortPresetChange(e.target.value)}
+              >
+                <option value="newest">Newest Orders</option>
+                <option value="oldest">Oldest Orders</option>
+                <option value="qty-desc">Target Quantity: High to Low</option>
+                <option value="qty-asc">Target Quantity: Low to High</option>
+                <option value="deliv-desc">Delivered Quantity: High to Low</option>
+                <option value="start-asc">Planned Start: Soonest</option>
+                <option value="start-desc">Planned Start: Latest</option>
+                <option value="status">Status</option>
+                {sortPreset === 'custom' && <option value="custom">Custom (Sorted by Column)</option>}
+              </select>
+            </div>
+
             {/* Reset Button */}
             <button 
               type="button" 
@@ -411,6 +462,7 @@ export const ProductionOrders: React.FC = () => {
                 setFilterPlant('ALL');
                 setFilterStartDate('');
                 setFilterEndDate('');
+                handleSortPresetChange('newest');
               }}
             >
               Reset Filters

@@ -92,6 +92,7 @@ export default class ProductionService extends cds.ApplicationService {
                 plannedEndDate: sapOrder.MfgOrderPlannedEndDate || null,
                 actualStartDate: sapOrder.MfgOrderActualReleaseDate || null,
                 actualEndDate: null,
+                creationDate: sapOrder.MfgOrderCreationDate || null,
                 material: {
                     ID: materialId,
                     code: sapOrder.Material,
@@ -256,6 +257,7 @@ export default class ProductionService extends cds.ApplicationService {
                     plannedEndDate: sapOrder.MfgOrderPlannedEndDate || null,
                     actualStartDate: sapOrder.MfgOrderActualReleaseDate || null,
                     actualEndDate: null,
+                    creationDate: sapOrder.MfgOrderCreationDate || null,
                     material: {
                         ID: materialId,
                         code: sapOrder.Material,

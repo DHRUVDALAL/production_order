@@ -21,7 +21,7 @@ export const ProductionOrders: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [sortField, setSortField] = useState<string>('orderNumber');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [sortPreset, setSortPreset] = useState<string>('newest');
+  const [sortPreset, setSortPreset] = useState<string>('order-desc');
 
   React.useEffect(() => {
     if (location.state?.status) {
@@ -165,29 +165,53 @@ export const ProductionOrders: React.FC = () => {
 
   const handleSortPresetChange = (preset: string) => {
     setSortPreset(preset);
-    if (preset === 'newest') {
+    if (preset === 'order-desc') {
       setSortField('orderNumber');
       setSortDirection('desc');
-    } else if (preset === 'oldest') {
+    } else if (preset === 'order-asc') {
       setSortField('orderNumber');
       setSortDirection('asc');
+    } else if (preset === 'product-asc') {
+      setSortField('material');
+      setSortDirection('asc');
+    } else if (preset === 'product-desc') {
+      setSortField('material');
+      setSortDirection('desc');
     } else if (preset === 'qty-desc') {
       setSortField('targetQty');
       setSortDirection('desc');
     } else if (preset === 'qty-asc') {
       setSortField('targetQty');
       setSortDirection('asc');
-    } else if (preset === 'deliv-desc') {
-      setSortField('deliveredQty');
-      setSortDirection('desc');
     } else if (preset === 'start-asc') {
       setSortField('plannedStartDate');
       setSortDirection('asc');
     } else if (preset === 'start-desc') {
       setSortField('plannedStartDate');
       setSortDirection('desc');
-    } else if (preset === 'status') {
+    } else if (preset === 'end-asc') {
+      setSortField('plannedEndDate');
+      setSortDirection('asc');
+    } else if (preset === 'end-desc') {
+      setSortField('plannedEndDate');
+      setSortDirection('desc');
+    } else if (preset === 'status-asc') {
       setSortField('status');
+      setSortDirection('asc');
+    } else if (preset === 'status-desc') {
+      setSortField('status');
+      setSortDirection('desc');
+    } else if (preset === 'plant-asc') {
+      setSortField('plant');
+      setSortDirection('asc');
+    } else if (preset === 'plant-desc') {
+      setSortField('plant');
+      setSortDirection('desc');
+    } else if (preset === 'created-desc') {
+      setSortField('creationDate');
+      setSortDirection('desc');
+    } else if (preset === 'created-asc') {
+      setSortField('creationDate');
       setSortDirection('asc');
     }
   };
@@ -259,6 +283,9 @@ export const ProductionOrders: React.FC = () => {
     } else if (sortField === 'plannedEndDate') {
       aVal = a.plannedEndDate || '';
       bVal = b.plannedEndDate || '';
+    } else if (sortField === 'creationDate') {
+      aVal = a.creationDate || '';
+      bVal = b.creationDate || '';
     }
 
     if (typeof aVal === 'number' && typeof bVal === 'number') {
@@ -457,14 +484,22 @@ export const ProductionOrders: React.FC = () => {
                 value={sortPreset} 
                 onChange={e => handleSortPresetChange(e.target.value)}
               >
-                {sortPreset === 'newest' && <option value="newest">Newest Orders</option>}
-                <option value="oldest">Oldest Orders</option>
-                <option value="qty-desc">Target Quantity: High to Low</option>
-                <option value="qty-asc">Target Quantity: Low to High</option>
-                <option value="deliv-desc">Delivered Quantity: High to Low</option>
-                <option value="start-asc">Planned Start: Soonest</option>
-                <option value="start-desc">Planned Start: Latest</option>
-                <option value="status">Status</option>
+                <option value="order-desc">Order (Descending)</option>
+                <option value="order-asc">Order (Ascending)</option>
+                <option value="product-asc">Product (Ascending)</option>
+                <option value="product-desc">Product (Descending)</option>
+                <option value="start-asc">Planned Start Date (Ascending)</option>
+                <option value="start-desc">Planned Start Date (Descending)</option>
+                <option value="end-asc">Planned End Date (Ascending)</option>
+                <option value="end-desc">Planned End Date (Descending)</option>
+                <option value="qty-desc">Target Quantity (Descending)</option>
+                <option value="qty-asc">Target Quantity (Ascending)</option>
+                <option value="status-asc">Execution Status (Ascending)</option>
+                <option value="status-desc">Execution Status (Descending)</option>
+                <option value="plant-asc">Plant (Ascending)</option>
+                <option value="plant-desc">Plant (Descending)</option>
+                <option value="created-desc">Created On (Descending)</option>
+                <option value="created-asc">Created On (Ascending)</option>
                 {sortPreset === 'custom' && <option value="custom">Custom (Sorted by Column)</option>}
               </select>
             </div>
@@ -480,7 +515,7 @@ export const ProductionOrders: React.FC = () => {
                 setFilterPlant('ALL');
                 setFilterStartDate('');
                 setFilterEndDate('');
-                handleSortPresetChange('newest');
+                handleSortPresetChange('order-desc');
               }}
             >
               Reset Filters

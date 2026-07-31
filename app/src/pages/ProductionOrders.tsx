@@ -211,13 +211,31 @@ export const ProductionOrders: React.FC = () => {
 
   // Sort the filtered orders
   const sortedOrders = [...(filteredOrders || [])].sort((a: any, b: any) => {
+    if (sortField === 'orderNumber') {
+      const aNum = parseInt(a.orderNumber, 10);
+      const bNum = parseInt(b.orderNumber, 10);
+      const aIsNum = !isNaN(aNum);
+      const bIsNum = !isNaN(bNum);
+
+      if (aIsNum && bIsNum) {
+        return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+      } else if (aIsNum && !bIsNum) {
+        return -1; // Numeric comes first
+      } else if (!aIsNum && bIsNum) {
+        return 1;  // Numeric comes first
+      } else {
+        const aVal = String(a.orderNumber).toLowerCase();
+        const bVal = String(b.orderNumber).toLowerCase();
+        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      }
+    }
+
     let aVal: any = '';
     let bVal: any = '';
 
-    if (sortField === 'orderNumber') {
-      aVal = a.orderNumber || '';
-      bVal = b.orderNumber || '';
-    } else if (sortField === 'material') {
+    if (sortField === 'material') {
       aVal = a.material?.code || '';
       bVal = b.material?.code || '';
     } else if (sortField === 'plant') {

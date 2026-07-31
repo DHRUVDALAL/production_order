@@ -457,7 +457,7 @@ export const ProductionOrders: React.FC = () => {
                 value={sortPreset} 
                 onChange={e => handleSortPresetChange(e.target.value)}
               >
-                <option value="newest">Newest Orders</option>
+                {sortPreset === 'newest' && <option value="newest">Newest Orders</option>}
                 <option value="oldest">Oldest Orders</option>
                 <option value="qty-desc">Target Quantity: High to Low</option>
                 <option value="qty-asc">Target Quantity: Low to High</option>

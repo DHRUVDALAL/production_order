@@ -548,33 +548,15 @@ export const ProductionOrders: React.FC = () => {
           <table className="sap-table">
             <thead>
               <tr>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('orderNumber')}>
-                  Order Number {renderSortIcon('orderNumber')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('material')}>
-                  Header Material {renderSortIcon('material')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plant')}>
-                  Plant {renderSortIcon('plant')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('targetQty')}>
-                  Target Qty {renderSortIcon('targetQty')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('confirmedQty')}>
-                  Confirmed Qty {renderSortIcon('confirmedQty')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('deliveredQty')}>
-                  Delivered Qty {renderSortIcon('deliveredQty')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('status')}>
-                  Status {renderSortIcon('status')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plannedStartDate')}>
-                  Planned Start {renderSortIcon('plannedStartDate')}
-                </th>
-                <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('plannedEndDate')}>
-                  Planned End {renderSortIcon('plannedEndDate')}
-                </th>
+                <th>Order Number</th>
+                <th>Header Material</th>
+                <th>Plant</th>
+                <th>Target Qty</th>
+                <th>Confirmed Qty</th>
+                <th>Delivered Qty</th>
+                <th>Status</th>
+                <th>Planned Start</th>
+                <th>Planned End</th>
                 <th>Actions</th>
               </tr>
             </thead>

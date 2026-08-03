@@ -62,7 +62,7 @@ async function runTests() {
         // STEP 2: Retrieve Master Data context
         // -------------------------------------------------------------
         console.log('Step 2: Retrieving manufacturing master data context...');
-        const matsRes = await apiCall("/odata/v4/production/Materials?$filter=isSapSynced eq true");
+        const matsRes = await apiCall("/odata/v4/production/Materials?$filter=materialGroup eq 'FINISHED' and isSapSynced eq true");
         const plantsRes = await apiCall("/odata/v4/production/Plants?$filter=isSapSynced eq true");
         const slocsRes = await apiCall("/odata/v4/production/StorageLocations?$filter=isSapSynced eq true");
 
@@ -70,8 +70,8 @@ async function runTests() {
             throw new Error("No SAP-synced plants or materials found! Ensure the SAP sync has run at least once by starting the backend.");
         }
 
-        const testPlant = plantsRes.value[0];
-        const testMaterial = matsRes.value.find(m => m.plant_ID === testPlant.ID) || matsRes.value[0];
+        const testMaterial = matsRes.value.find(m => m.plant_ID && plantsRes.value.some(p => p.ID === m.plant_ID)) || matsRes.value[0];
+        const testPlant = plantsRes.value.find(p => p.ID === testMaterial.plant_ID) || plantsRes.value[0];
         const testSloc = slocsRes.value.find(s => s.plant_ID === testPlant.ID) || { ID: null, code: '' };
 
         console.log(`- Material for order: ${testMaterial.code} (${testMaterial.description})`);

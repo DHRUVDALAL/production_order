@@ -57,9 +57,7 @@ export const Dashboard: React.FC = () => {
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#32363a' }}>Manufacturing Executive Dashboard</h2>
           <p style={{ fontSize: '0.85rem', color: '#6a7b8c' }}>Real-time production visibility, operation throughput, and quality metrics.</p>
         </div>
-        <div style={{ fontSize: '0.85rem', padding: '0.5rem 1rem', backgroundColor: '#ffffff', borderRadius: '4px', border: '1px solid #d9d9d9', fontWeight: 600 }}>
-          Active plant context: <span style={{ color: '#0a6ed1' }}>Dallas Assembly (PL01)</span>
-        </div>
+
       </div>
 
       {/* KPI Tiles (Standard SAP Fiori Style - Clickable to navigate with filters) */}
@@ -144,8 +142,7 @@ export const Dashboard: React.FC = () => {
               recentAlerts.map((n: any) => (
                 <Link 
                   key={n.ID} 
-                  to="/operations" 
-                  state={{ search: n.order?.orderNumber }}
+                  to={n.order?.ID ? `/orders/${n.order.ID}` : '/orders'}
                   style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
                 >
                   <div 

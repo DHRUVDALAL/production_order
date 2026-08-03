@@ -19,7 +19,7 @@ export const ProductionOrders: React.FC = () => {
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [sortField, setSortField] = useState<string>('orderNumber');
+  const [sortField, setSortField] = useState<string>('createdAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   React.useEffect(() => {
@@ -295,9 +295,9 @@ export const ProductionOrders: React.FC = () => {
     } else if (sortField === 'plannedEndDate') {
       aVal = a.plannedEndDate || '';
       bVal = b.plannedEndDate || '';
-    } else if (sortField === 'creationDate') {
-      aVal = a.creationDate || '';
-      bVal = b.creationDate || '';
+    } else if (sortField === 'createdAt') {
+      aVal = a.createdAt || '';
+      bVal = b.createdAt || '';
     }
 
     if (typeof aVal === 'number' && typeof bVal === 'number') {
@@ -311,6 +311,21 @@ export const ProductionOrders: React.FC = () => {
     }
   });
 
+  // Actual standard SAP S/4HANA Order Types and descriptions
+  const ORDER_TYPE_DESCRIPTIONS: Record<string, string> = {
+    YBM1: 'MTS Production Order',
+    YBM4: 'Production Order Processing MTO',
+    YBM5: 'MTS Production for Process Manufacturing',
+    YBM6: 'Prod Order ETO (Event-Based Posting)',
+    YBW1: 'Rework Prod. Order - Stock Manufac. Item',
+    YPK1: 'Production order for Kanban',
+    ZDEV: 'Development Prod. Order',
+    ZPPN: 'Production Order MTO',
+    ZPPS: 'Production Order MTS',
+    ZRWI: 'Rework Prod. Order - In Process',
+    ZRWM: 'Rework Prod. Order - Stock Manufactured'
+  };
+
   // Dynamically extract actual Order Types present in the live orders fetched from SAP S/4HANA
   const uniqueOrderTypes = React.useMemo(() => {
     const types = new Set<string>();
@@ -319,9 +334,8 @@ export const ProductionOrders: React.FC = () => {
         types.add(o.orderType);
       }
     });
-    // Ensure standard defaults ZPPS and YBM1 are always available if no orders exist yet
-    types.add('ZPPS');
-    types.add('YBM1');
+    // Ensure all actual SAP S/4HANA order types are always available
+    Object.keys(ORDER_TYPE_DESCRIPTIONS).forEach(t => types.add(t));
     return Array.from(types);
   }, [orders]);
 
@@ -380,7 +394,7 @@ export const ProductionOrders: React.FC = () => {
                   <label className="sap-label">Order Type *</label>
                   <select className="sap-input" value={orderType} onChange={e => setOrderType(e.target.value)} required>
                     {uniqueOrderTypes.map(t => (
-                      <option key={t} value={t}>{t} - {t === 'ZPPS' ? 'Standard Production Order' : 'Custom Production Order'}</option>
+                      <option key={t} value={t}>{t} - {ORDER_TYPE_DESCRIPTIONS[t] || 'Custom Production Order'}</option>
                     ))}
                   </select>
                 </div>
@@ -615,65 +629,25 @@ export const ProductionOrders: React.FC = () => {
             {/* Sort Orders Section */}
             <div className="sap-form-group" style={{ marginBottom: 0 }}>
               <label className="sap-label">Sort Orders</label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <select 
-                  className="sap-input" 
-                  style={{ flex: 1 }}
-                  value={sortField} 
-                  onChange={e => setSortField(e.target.value)}
-                >
-                  <option value="orderNumber">Order</option>
-                  <option value="material">Product</option>
-                  <option value="plannedStartDate">Planned Start Date</option>
-                  <option value="plannedEndDate">Planned End Date</option>
-                  <option value="targetQty">Target Quantity</option>
-                  <option value="status">Execution Status</option>
-                  <option value="plant">Plant</option>
-                  <option value="creationDate">Created On</option>
-                </select>
-                <div style={{ display: 'flex', gap: '2px', backgroundColor: '#eef2f6', border: '1px solid var(--sap-border-color)', borderRadius: '6px', padding: '2px', height: '36px', boxSizing: 'border-box' }}>
-                  <button
-                    type="button"
-                    onClick={() => setSortDirection('asc')}
-                    style={{
-                      border: 'none',
-                      borderRadius: '4px',
-                      backgroundColor: sortDirection === 'asc' ? 'var(--sap-brand-color)' : 'transparent',
-                      color: sortDirection === 'asc' ? '#ffffff' : 'var(--sap-text-color)',
-                      padding: '0 10px',
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: 500,
-                      display: 'flex',
-                      alignItems: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Sort Ascending"
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSortDirection('desc')}
-                    style={{
-                      border: 'none',
-                      borderRadius: '4px',
-                      backgroundColor: sortDirection === 'desc' ? 'var(--sap-brand-color)' : 'transparent',
-                      color: sortDirection === 'desc' ? '#ffffff' : 'var(--sap-text-color)',
-                      padding: '0 10px',
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: 500,
-                      display: 'flex',
-                      alignItems: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Sort Descending"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                </div>
-              </div>
+              <select 
+                className="sap-input" 
+                value={`${sortField}_${sortDirection}`} 
+                onChange={e => {
+                  const [field, direction] = e.target.value.split('_');
+                  setSortField(field);
+                  setSortDirection(direction as 'asc' | 'desc');
+                }}
+              >
+                <option value="createdAt_desc">Most Recent (Newest First)</option>
+                <option value="createdAt_asc">Oldest First</option>
+                <option value="orderNumber_asc">Order Number (A-Z)</option>
+                <option value="orderNumber_desc">Order Number (Z-A)</option>
+                <option value="plannedStartDate_asc">Planned Start Date (Earliest)</option>
+                <option value="plannedEndDate_asc">Planned End Date</option>
+                <option value="targetQty_desc">Target Quantity (High to Low)</option>
+                <option value="status_asc">Execution Status</option>
+                <option value="plant_asc">Plant Code</option>
+              </select>
             </div>
 
             {/* Reset Button */}
@@ -687,8 +661,8 @@ export const ProductionOrders: React.FC = () => {
                 setFilterPlant('ALL');
                 setFilterStartDate('');
                 setFilterEndDate('');
-                setSortField('orderNumber');
-                setSortDirection('desc');
+                 setSortField('createdAt');
+                 setSortDirection('desc');
               }}
             >
               Reset Filters

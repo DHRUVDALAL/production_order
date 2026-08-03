@@ -37,6 +37,54 @@ export default class ProductionService extends cds.ApplicationService {
         } = sapConfirmSrv.entities;
 
         // ----------------------------------------------------------------
+        // Ensure actual S/4HANA Master Data is seeded and marked as isSapSynced
+        // ----------------------------------------------------------------
+        await (async () => {
+            try {
+                // Seed actual SAP plants
+                const plants = [
+                    { ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143', code: '1102', name: 'Plant 1102', description: 'SAP Plant 1102', location: '', isSapSynced: true },
+                    { ID: '9c111735-4ba3-4f12-aad9-878e06f40e38', code: '1105', name: 'Plant 1105', description: 'SAP Plant 1105', location: '', isSapSynced: true }
+                ];
+                for (const p of plants) {
+                    const existing = await SELECT.one.from('sap.production.portal.Plants').where({ code: p.code });
+                    if (!existing) {
+                        await INSERT.into('sap.production.portal.Plants').entries(p);
+                    }
+                }
+
+                // Seed actual SAP storage locations
+                const slocs = [
+                    { ID: 'd311e780-d389-4329-85df-f11d53bb7406', code: 'RAW1', name: 'Raw Materials 1', plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143', isSapSynced: true },
+                    { ID: 'ea17a102-bf89-4112-a722-6b94c03ba07c', code: 'SFG1', name: 'Semi-Finished Goods 1', plant_ID: '9c111735-4ba3-4f12-aad9-878e06f40e38', isSapSynced: true }
+                ];
+                for (const s of slocs) {
+                    const existing = await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: s.code, plant_ID: s.plant_ID });
+                    if (!existing) {
+                        await INSERT.into('sap.production.portal.StorageLocations').entries(s);
+                    }
+                }
+
+                // Seed actual SAP materials
+                const materials = [
+                    { ID: '67346951-350e-4b62-953b-574dc301aacc', code: 'RP/24-012-07', description: 'RP/24-012-07', materialGroup: 'FINISHED', baseUnit: 'PC', standardPrice: 0, currency: 'INR', isActive: true, isSapSynced: true, plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143' },
+                    { ID: 'c1674a2b-3129-4700-9852-6b1e620584cc', code: 'RP/24-012-02', description: 'RP/24-012-02', materialGroup: 'FINISHED', baseUnit: 'PC', standardPrice: 0, currency: 'INR', isActive: true, isSapSynced: true, plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143' },
+                    { ID: 'ea6c8734-d4ba-4700-8cc3-92f7b4946399', code: 'RP/24-012-11', description: 'RP/24-012-11', materialGroup: 'FINISHED', baseUnit: 'PC', standardPrice: 0, currency: 'INR', isActive: true, isSapSynced: true, plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143' },
+                    { ID: '8c3b7a5a-8b1e-450f-a99f-4318d1a1b1a1', code: '100320', description: 'Raw Component 100320', materialGroup: 'RAW', baseUnit: 'PC', standardPrice: 0, currency: 'INR', isActive: true, isSapSynced: true, plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143' },
+                    { ID: '7b5e43a6-b51f-45c1-90a8-b5e1b10a26ef', code: '100019', description: 'Raw Component 100019', materialGroup: 'RAW', baseUnit: 'PC', standardPrice: 0, currency: 'INR', isActive: true, isSapSynced: true, plant_ID: 'a60288fc-d4cd-4267-83c4-6a3ad7079143' }
+                ];
+                for (const m of materials) {
+                    const existing = await SELECT.one.from('sap.production.portal.Materials').where({ code: m.code, plant_ID: m.plant_ID });
+                    if (!existing) {
+                        await INSERT.into('sap.production.portal.Materials').entries(m);
+                    }
+                }
+            } catch (err) {
+                console.error('[BOOTSTRAP SEED ERROR]', err);
+            }
+        })();
+
+        // ----------------------------------------------------------------
         // Helper: derive a portal status from the Public Cloud order header
         // flags. S/4HANA Public Cloud exposes no ManufacturingOrderStatus
         // field — status is a set of 'X'/'' indicators. Most-advanced wins.

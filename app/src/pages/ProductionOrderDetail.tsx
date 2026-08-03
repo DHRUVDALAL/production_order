@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2 } from 'lucide-react';
 
 export const ProductionOrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -11,10 +11,30 @@ export const ProductionOrderDetail: React.FC = () => {
   const queryClient = useQueryClient();
   const [grQty, setGrQty] = useState('');
   const [grSlocId, setGrSlocId] = useState('');
-  const [grPostingDate, setGrPostingDate] = useState(new Date().toISOString().split('T')[0]);
   const [showGrForm, setShowGrForm] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isEditingQty, setIsEditingQty] = useState(false);
+  const [editQtyValue, setEditQtyValue] = useState('');
+
+  const updateQtyMutation = useMutation({
+    mutationFn: async (newQty: number) => {
+      setErrorMsg('');
+      setSuccessMsg('');
+      const res = await api.patch(`/odata/v4/production/ProductionOrders(${id})`, {
+        targetQty: newQty
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      setSuccessMsg('Target quantity updated successfully!');
+      setIsEditingQty(false);
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to update target quantity.');
+    }
+  });
 
   // Fetch Order details
   const { data: order, isLoading } = useQuery({
@@ -87,8 +107,7 @@ export const ProductionOrderDetail: React.FC = () => {
       const res = await api.post('/odata/v4/production/postGoodsReceipt', {
         orderId: id,
         quantity: parseFloat(grQty),
-        slocId: grSlocId,
-        postingDate: grPostingDate
+        slocId: grSlocId
       });
       return res.data;
     },
@@ -114,8 +133,8 @@ export const ProductionOrderDetail: React.FC = () => {
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (!grQty || !grSlocId || !grPostingDate) {
-      setErrorMsg('Please specify quantity, storage location, and posting date.');
+    if (!grQty || !grSlocId) {
+      setErrorMsg('Please specify quantity and storage location.');
       return;
     }
     postGrMutation.mutate();
@@ -125,10 +144,18 @@ export const ProductionOrderDetail: React.FC = () => {
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
   // Determine stage index for progress bar
-  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'];
-  let currentStageIndex = statusFlow.indexOf(order.status);
-  if (order.status === 'GMPS') currentStageIndex = statusFlow.indexOf('GI');
-  if (order.status === 'PDLV' || order.status === 'DLV') currentStageIndex = statusFlow.indexOf('GR');
+  // Determine stage index for progress bar
+  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
+  let mappedStatus = 'CRTD';
+  const activeStatuses = (order.status || '').split(' ');
+  if (activeStatuses.includes('CLSD')) mappedStatus = 'CLSD';
+  else if (activeStatuses.includes('TECO')) mappedStatus = 'TECO';
+  else if (activeStatuses.includes('DLV') || activeStatuses.includes('PDLV')) mappedStatus = 'GR';
+  else if (activeStatuses.includes('CNF') || activeStatuses.includes('PCNF')) mappedStatus = 'CNF';
+  else if (activeStatuses.includes('REL')) mappedStatus = 'REL';
+  else if (activeStatuses.includes('DRAFT')) mappedStatus = 'DRAFT';
+
+  let currentStageIndex = statusFlow.indexOf(mappedStatus);
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>
@@ -192,7 +219,11 @@ export const ProductionOrderDetail: React.FC = () => {
           <div>
             <div className="sap-card-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Production Order: {order.orderNumber}</h2>
-              <span className={`sap-badge sap-badge-${order.status}`}>{order.status}</span>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {(order.status || '').split(' ').map((st: string) => (
+                  <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.25rem', fontSize: '0.85rem' }}>
               <div>
@@ -202,7 +233,70 @@ export const ProductionOrderDetail: React.FC = () => {
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Target Quantity</strong>
-                <div style={{ fontWeight: 600, marginTop: '0.2rem' }}>{parseFloat(order.targetQty).toFixed(0)} PC</div>
+                {isEditingQty ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
+                    <input
+                      type="number"
+                      value={editQtyValue}
+                      onChange={(e) => setEditQtyValue(e.target.value)}
+                      style={{
+                        width: '70px',
+                        padding: '2px 5px',
+                        fontSize: '0.85rem',
+                        border: '1px solid var(--sap-border-color)',
+                        borderRadius: '4px'
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const val = parseFloat(editQtyValue);
+                        if (!isNaN(val) && val > 0) {
+                          updateQtyMutation.mutate(val);
+                        }
+                      }}
+                      disabled={updateQtyMutation.isPending}
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: '#37b24d',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem'
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setIsEditingQty(false)}
+                      style={{
+                        padding: '2px 8px',
+                        backgroundColor: '#fa5252',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.75rem'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, marginTop: '0.2rem' }}>
+                    <span>{parseFloat(order.targetQty).toFixed(0)} PC</span>
+                    {(order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('REL')) && (
+                      <Edit2
+                        size={14}
+                        style={{ cursor: 'pointer', color: '#0a6ed1' }}
+                        onClick={() => {
+                          setEditQtyValue(parseFloat(order.targetQty).toFixed(0));
+                          setIsEditingQty(true);
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Confirmed Yield</strong>
@@ -230,7 +324,7 @@ export const ProductionOrderDetail: React.FC = () => {
           <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#555', marginBottom: '0.25rem' }}>Operations Control</h4>
           
           {/* ATP Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status === 'CRTD' || order.status === 'MACA') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
             <button 
               className="sap-btn sap-btn-secondary" 
               style={{ width: '100%' }}
@@ -243,7 +337,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Release Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER'].includes(user.role) && (order.status === 'CRTD' || order.status === 'MACA') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%' }}
@@ -256,7 +350,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Start Execution Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status === 'REL') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('REL')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%' }}
@@ -269,7 +363,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Goods Receipt Button */}
-          {user && ['SYS_ADMIN', 'INV_MANAGER'].includes(user.role) && (order.status === 'CNF' || order.status === 'PCNF') && (
+          {user && ['SYS_ADMIN', 'INV_MANAGER'].includes(user.role) && (order.status?.split(' ').includes('CNF') || order.status?.split(' ').includes('PCNF')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%', backgroundColor: '#2b7c2b' }}
@@ -281,7 +375,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* If no action matches */}
-          {!['CRTD', 'MACA', 'REL', 'CNF', 'PCNF'].includes(order.status) && (
+          {!order.status?.split(' ').some((st: string) => ['CRTD', 'MACA', 'REL', 'CNF', 'PCNF'].includes(st)) && (
             <div style={{ fontSize: '0.8rem', color: '#666', textAlign: 'center', padding: '0.5rem 0' }}>
               No current control actions available in status <strong>{order.status}</strong>.
             </div>
@@ -316,14 +410,6 @@ export const ProductionOrderDetail: React.FC = () => {
                   <option key={s.ID} value={s.ID}>{s.code} - {s.name}</option>
                 ))}
               </select>
-            </div>
-
-            <div className="sap-form-group" style={{ flex: 1, minWidth: '150px' }}>
-              <label className="sap-label">Posting Date *</label>
-              <input type="date" className="sap-input" value={grPostingDate} onChange={e => setGrPostingDate(e.target.value)} required />
-              <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                Must fall in an open SAP period.
-              </div>
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
@@ -393,8 +479,6 @@ export const ProductionOrderDetail: React.FC = () => {
                 <th>Component Code</th>
                 <th>Description</th>
                 <th>Required Qty</th>
-                <th>Available Qty</th>
-                <th>Shortage Qty</th>
                 <th>Issued Qty</th>
                 <th>Status</th>
               </tr>
@@ -402,7 +486,7 @@ export const ProductionOrderDetail: React.FC = () => {
             <tbody>
               {order.components?.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
+                  <td colSpan={5} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
                 </tr>
               ) : (
                 order.components?.map((c: any) => (
@@ -410,16 +494,6 @@ export const ProductionOrderDetail: React.FC = () => {
                     <td style={{ fontWeight: 600 }}>{c.componentMaterial?.code}</td>
                     <td>{c.componentMaterial?.description}</td>
                     <td>{parseFloat(c.requiredQty).toFixed(0)} {c.unit}</td>
-                    <td>{c.availableQty != null ? `${parseFloat(c.availableQty).toFixed(0)} ${c.unit}` : '-'}</td>
-                    <td>
-                      {c.shortageQty > 0 ? (
-                        <span style={{ color: '#bb0000', fontWeight: 'bold' }}>
-                          {parseFloat(c.shortageQty).toFixed(0)} {c.unit}
-                        </span>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
                     <td>{parseFloat(c.issuedQty).toFixed(0)} {c.unit}</td>
                     <td>
                       <span style={{

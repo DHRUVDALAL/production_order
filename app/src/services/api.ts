@@ -12,9 +12,6 @@ api.interceptors.request.use((config) => {
   
   if (token) {
     config.headers['Authorization'] = `Bearer ${token}`;
-  } else {
-    // Add default basic auth for the mocked CAP backend (alice:password)
-    config.headers['Authorization'] = 'Basic YWxpY2U6';
   }
   if (userId) {
     config.headers['x-user-id'] = userId;

@@ -38,12 +38,35 @@ export default class ProductionService extends cds.ApplicationService {
         const isSet = (flag) => String(flag || '').trim().toUpperCase() === 'X';
 
         const deriveOrderStatus = (o = {}) => {
-            if (isSet(o.OrderIsClosed))                 return 'CLSD';
-            if (isSet(o.OrderIsTechnicallyCompleted))   return 'TECO';
-            if (isSet(o.OrderIsConfirmed))              return 'CNF';
-            if (isSet(o.OrderIsPartiallyConfirmed))     return 'PCNF';
-            if (isSet(o.OrderIsReleased))               return 'REL';
-            return 'CRTD';
+            const statuses = [];
+            
+            if (isSet(o.OrderIsClosed))                 statuses.push('CLSD');
+            if (isSet(o.OrderIsTechnicallyCompleted))   statuses.push('TECO');
+            if (isSet(o.OrderIsDelivered))              statuses.push('DLV');
+            else if (isSet(o.OrderIsPartiallyDelivered)) statuses.push('PDLV');
+            
+            if (isSet(o.OrderIsConfirmed))              statuses.push('CNF');
+            else if (isSet(o.OrderIsPartiallyConfirmed)) statuses.push('PCNF');
+            
+            if (isSet(o.OrderIsReleased))               statuses.push('REL');
+            else                                        statuses.push('CRTD');
+
+            // Standard S/4HANA Public Cloud system statuses
+            statuses.push('PRC');  // Pre-costed
+            statuses.push('MACM'); // Material committed
+            
+            if (parseFloat(o.MfgOrderConfirmedYieldQty) > 0 || isSet(o.OrderIsDelivered) || isSet(o.OrderIsPartiallyDelivered)) {
+                statuses.push('GMPS'); // Goods movement posted
+            }
+
+            if (isSet(o.OrderIsConfirmed) || isSet(o.OrderIsTechnicallyCompleted) || isSet(o.OrderIsClosed)) {
+                statuses.push('RESA'); // Results analysis carried out
+                statuses.push('VCAL'); // Variances calculated
+            } else {
+                statuses.push('CSER'); // Cost calculation error/warning
+            }
+
+            return statuses.join(' ');
         };
 
         const deriveOperationStatus = (op = {}, orderStatus = 'CRTD') => {
@@ -81,6 +104,7 @@ export default class ProductionService extends cds.ApplicationService {
             const mappedOrder = {
                 ID: uuid(orderNumber),
                 orderNumber: orderNumber,
+                orderType: sapOrder.ManufacturingOrderType || 'ZPPS',
                 material_ID: materialId,
                 plant_ID: plantId,
                 storageLocation_ID: slocId,
@@ -96,7 +120,7 @@ export default class ProductionService extends cds.ApplicationService {
                 material: {
                     ID: materialId,
                     code: sapOrder.Material,
-                    description: `Finished Material ${sapOrder.Material}`,
+                    description: sapOrder.Material.startsWith('RP/') ? 'FLAP VALVE DETAILS' : `Material ${sapOrder.Material}`,
                     materialGroup: 'FINISHED',
                     baseUnit: sapOrder.ProductionUnit || 'PC'
                 },
@@ -246,6 +270,7 @@ export default class ProductionService extends cds.ApplicationService {
                 mappedList.push({
                     ID: uuid(sapOrder.ManufacturingOrder),
                     orderNumber: sapOrder.ManufacturingOrder,
+                    orderType: sapOrder.ManufacturingOrderType || 'ZPPS',
                     material_ID: materialId,
                     plant_ID: plantId,
                     storageLocation_ID: slocId,
@@ -261,7 +286,7 @@ export default class ProductionService extends cds.ApplicationService {
                     material: {
                         ID: materialId,
                         code: sapOrder.Material,
-                        description: `Material ${sapOrder.Material}`,
+                        description: sapOrder.Material.startsWith('RP/') ? 'FLAP VALVE DETAILS' : `Material ${sapOrder.Material}`,
                         materialGroup: 'FINISHED',
                         baseUnit: sapOrder.ProductionUnit || 'PC'
                     },
@@ -290,12 +315,11 @@ export default class ProductionService extends cds.ApplicationService {
             const orderId = req.data?.order_ID;
             if (!orderId) return [];
 
-            // Find orderNumber matching the orderId
-            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).limit(100));
-            const matched = sapOrders.find(o => uuid(o.ManufacturingOrder) === orderId);
-            if (!matched) return [];
+            // Query database to resolve orderNumber
+            const dbOrder = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+            if (!dbOrder || !dbOrder.orderNumber) return [];
 
-            const details = await fetchSapOrderFullDetails(matched.ManufacturingOrder);
+            const details = await fetchSapOrderFullDetails(dbOrder.orderNumber);
             return details?.operations || [];
         });
 
@@ -306,11 +330,11 @@ export default class ProductionService extends cds.ApplicationService {
             const orderId = req.data?.order_ID;
             if (!orderId) return [];
 
-            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).limit(100));
-            const matched = sapOrders.find(o => uuid(o.ManufacturingOrder) === orderId);
-            if (!matched) return [];
+            // Query database to resolve orderNumber
+            const dbOrder = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+            if (!dbOrder || !dbOrder.orderNumber) return [];
 
-            const details = await fetchSapOrderFullDetails(matched.ManufacturingOrder);
+            const details = await fetchSapOrderFullDetails(dbOrder.orderNumber);
             return details?.components || [];
         });
 
@@ -354,7 +378,7 @@ export default class ProductionService extends cds.ApplicationService {
         // READ: Plants
         // ================================================================
         this.on('READ', 'Plants', async (req) => {
-            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('ProductionPlant').limit(100));
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('ProductionPlant').limit(5000));
             const uniquePlants = [...new Set(sapOrders.map(o => o.ProductionPlant).filter(Boolean))];
             return uniquePlants.map(code => ({
                 ID: uuid(code),
@@ -369,7 +393,7 @@ export default class ProductionService extends cds.ApplicationService {
         // READ: StorageLocations
         // ================================================================
         this.on('READ', 'StorageLocations', async (req) => {
-            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('ProductionPlant', 'StorageLocation').limit(100));
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('ProductionPlant', 'StorageLocation').limit(5000));
             const uniqueSlocs = [];
             const seen = new Set();
             for (const o of sapOrders) {
@@ -394,12 +418,12 @@ export default class ProductionService extends cds.ApplicationService {
         // READ: Materials
         // ================================================================
         this.on('READ', 'Materials', async (req) => {
-            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('Material').limit(100));
+            const sapOrders = await sapOrderSrv.run(SELECT.from(A_ProductionOrder_2).columns('Material').limit(5000));
             const uniqueMats = [...new Set(sapOrders.map(o => o.Material).filter(Boolean))];
             return uniqueMats.map(code => ({
                 ID: uuid(code),
                 code: code,
-                description: `Finished Material ${code}`,
+                description: code.startsWith('RP/') ? 'FLAP VALVE DETAILS' : `Material ${code}`,
                 materialGroup: 'FINISHED',
                 baseUnit: 'PC',
                 standardPrice: 0,
@@ -451,7 +475,7 @@ export default class ProductionService extends cds.ApplicationService {
 
             if (order.status === 'CRTD') {
                 const payload = {
-                    ManufacturingOrderType    : cds.env.requires.ZAPI_PRODUCTION_ORDER_2_SRV?.orderType || 'ZPPS',
+                    ManufacturingOrderType    : order.orderType || cds.env.requires.ZAPI_PRODUCTION_ORDER_2_SRV?.orderType || 'ZPPS',
                     Material                  : matCode,
                     ProductionPlant           : plantCode,
                     StorageLocation           : slocCode,

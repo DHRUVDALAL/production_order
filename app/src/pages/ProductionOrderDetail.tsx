@@ -144,12 +144,16 @@ export const ProductionOrderDetail: React.FC = () => {
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
   // Determine stage index for progress bar
+  // Determine stage index for progress bar
   const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
-  let mappedStatus = order.status;
-  if (order.status === 'STRT') mappedStatus = 'REL';
-  if (order.status === 'INSP') mappedStatus = 'CNF';
-  if (order.status === 'GMPS') mappedStatus = 'GI';
-  if (order.status === 'PDLV' || order.status === 'DLV') mappedStatus = 'GR';
+  let mappedStatus = 'CRTD';
+  const activeStatuses = (order.status || '').split(' ');
+  if (activeStatuses.includes('CLSD')) mappedStatus = 'CLSD';
+  else if (activeStatuses.includes('TECO')) mappedStatus = 'TECO';
+  else if (activeStatuses.includes('DLV') || activeStatuses.includes('PDLV')) mappedStatus = 'GR';
+  else if (activeStatuses.includes('CNF') || activeStatuses.includes('PCNF')) mappedStatus = 'CNF';
+  else if (activeStatuses.includes('REL')) mappedStatus = 'REL';
+  else if (activeStatuses.includes('DRAFT')) mappedStatus = 'DRAFT';
 
   let currentStageIndex = statusFlow.indexOf(mappedStatus);
 
@@ -215,7 +219,11 @@ export const ProductionOrderDetail: React.FC = () => {
           <div>
             <div className="sap-card-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Production Order: {order.orderNumber}</h2>
-              <span className={`sap-badge sap-badge-${order.status}`}>{order.status}</span>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {(order.status || '').split(' ').map((st: string) => (
+                  <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.25rem', fontSize: '0.85rem' }}>
               <div>
@@ -277,7 +285,7 @@ export const ProductionOrderDetail: React.FC = () => {
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, marginTop: '0.2rem' }}>
                     <span>{parseFloat(order.targetQty).toFixed(0)} PC</span>
-                    {['CRTD', 'REL'].includes(order.status) && (
+                    {(order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('REL')) && (
                       <Edit2
                         size={14}
                         style={{ cursor: 'pointer', color: '#0a6ed1' }}
@@ -316,7 +324,7 @@ export const ProductionOrderDetail: React.FC = () => {
           <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#555', marginBottom: '0.25rem' }}>Operations Control</h4>
           
           {/* ATP Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status === 'CRTD' || order.status === 'MACA') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
             <button 
               className="sap-btn sap-btn-secondary" 
               style={{ width: '100%' }}
@@ -329,7 +337,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Release Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER'].includes(user.role) && (order.status === 'CRTD' || order.status === 'MACA') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%' }}
@@ -342,7 +350,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Start Execution Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status === 'REL') && (
+          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('REL')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%' }}
@@ -355,7 +363,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* Goods Receipt Button */}
-          {user && ['SYS_ADMIN', 'INV_MANAGER'].includes(user.role) && (order.status === 'CNF' || order.status === 'PCNF') && (
+          {user && ['SYS_ADMIN', 'INV_MANAGER'].includes(user.role) && (order.status?.split(' ').includes('CNF') || order.status?.split(' ').includes('PCNF')) && (
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%', backgroundColor: '#2b7c2b' }}
@@ -367,7 +375,7 @@ export const ProductionOrderDetail: React.FC = () => {
           )}
 
           {/* If no action matches */}
-          {!['CRTD', 'MACA', 'REL', 'CNF', 'PCNF'].includes(order.status) && (
+          {!order.status?.split(' ').some((st: string) => ['CRTD', 'MACA', 'REL', 'CNF', 'PCNF'].includes(st)) && (
             <div style={{ fontSize: '0.8rem', color: '#666', textAlign: 'center', padding: '0.5rem 0' }}>
               No current control actions available in status <strong>{order.status}</strong>.
             </div>

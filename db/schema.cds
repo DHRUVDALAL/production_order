@@ -108,6 +108,7 @@ entity UserRoles : cuid, managed {
 
 entity ProductionOrders : cuid, managed {
     orderNumber     : String(12); // e.g. "100000000001"
+    orderType       : String(4);  // e.g. "ZPPS", "YBM1"
     material        : Association to Materials;
     plant           : Association to Plants;
     storageLocation : Association to StorageLocations;

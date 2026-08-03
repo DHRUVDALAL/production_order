@@ -1,30 +1,16 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Wrench, CheckCircle2, Play, AlertCircle } from 'lucide-react';
 
 export const Operations: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const location = useLocation();
   
   // Selected operation for confirmation
   const [selectedOp, setSelectedOp] = useState<any>(null);
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  
-  // Search & Filter State
-  const [searchQuery, setSearchQuery] = useState<string>(() => {
-    return location.state?.search || '';
-  });
-  const [statusFilter, setStatusFilter] = useState('ALL');
-
-  React.useEffect(() => {
-    if (location.state?.search) {
-      setSearchQuery(location.state.search);
-    }
-  }, [location.state]);
   
   // Confirmation form state
   const [yieldQty, setYieldQty] = useState('100');
@@ -40,7 +26,7 @@ export const Operations: React.FC = () => {
   const { data: activeOrders, isLoading } = useQuery({
     queryKey: ['activeOrdersList'],
     queryFn: async () => {
-      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'REL' or status eq 'STRT' or status eq 'PCNF'&$expand=material,operations($orderby=sequence asc;$expand=workCenter)");
+      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'STRT' or status eq 'PCNF'&$expand=material,operations($orderby=sequence asc;$expand=workCenter)");
       return res.data?.value || [];
     }
   });
@@ -103,23 +89,6 @@ export const Operations: React.FC = () => {
     });
   };
 
-  const filteredActiveOrders = activeOrders?.filter((order: any) => {
-    // 1. Status Filter
-    if (statusFilter !== 'ALL' && order.status !== statusFilter) return false;
-
-    // 2. Search query matching orderNumber, material code, or material description
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchOrder = order.orderNumber?.toLowerCase().includes(q);
-      const matchMatCode = order.material?.code?.toLowerCase().includes(q);
-      const matchMatDesc = order.material?.description?.toLowerCase().includes(q);
-      
-      if (!matchOrder && !matchMatCode && !matchMatDesc) return false;
-    }
-
-    return true;
-  }) || [];
-
   if (isLoading) {
     return (
       <div style={{ 
@@ -152,56 +121,66 @@ export const Operations: React.FC = () => {
         </div>
       )}
 
+      {/* Dialog for Recording Confirmation */}
+      {selectedOp && (
+        <div className="sap-card" style={{ marginBottom: '2rem', border: '1px solid #0a6ed1' }}>
+          <div className="sap-card-header">
+            <h3 className="sap-card-title">Record Time & Yield: Order {selectedOrder.orderNumber} - Op {selectedOp.sequence}</h3>
+          </div>
+          <form onSubmit={handleConfirmSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem' }}>
+            <div className="sap-form-group">
+              <label className="sap-label">Yield Quantity (PC) *</label>
+              <input type="number" className="sap-input" value={yieldQty} onChange={e => setYieldQty(e.target.value)} min="0" required />
+            </div>
 
-      {/* Search & Filter Panel */}
-      <div className="sap-card" style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'end' }}>
-        <div className="sap-form-group" style={{ marginBottom: 0, flex: 1, minWidth: '250px' }}>
-          <label className="sap-label">Search Active Orders</label>
-          <input 
-            type="text" 
-            className="sap-input" 
-            placeholder="Search Order #, material code/description..." 
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-        </div>
-        
-        <div className="sap-form-group" style={{ marginBottom: 0, width: '200px' }}>
-          <label className="sap-label">Status Filter</label>
-          <select 
-            className="sap-input" 
-            value={statusFilter} 
-            onChange={e => setStatusFilter(e.target.value)}
-          >
-            <option value="ALL">All Active Orders</option>
-            <option value="STRT">Started (STRT)</option>
-            <option value="PCNF">Partially Confirmed (PCNF)</option>
-          </select>
-        </div>
+            <div className="sap-form-group">
+              <label className="sap-label">Scrap Quantity (PC) *</label>
+              <input type="number" className="sap-input" value={scrapQty} onChange={e => setScrapQty(e.target.value)} min="0" required />
+            </div>
 
-        <button 
-          type="button" 
-          className="sap-btn sap-btn-secondary" 
-          style={{ height: '36px' }}
-          onClick={() => {
-            setSearchQuery('');
-            setStatusFilter('ALL');
-          }}
-        >
-          Reset Filters
-        </button>
-      </div>
+            <div className="sap-form-group">
+              <label className="sap-label">Labor/Machine Time Spent (Min) *</label>
+              <input type="number" className="sap-input" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} min="0" required />
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Posting Date *</label>
+              <input type="date" className="sap-input" value={postingDate} onChange={e => setPostingDate(e.target.value)} required />
+              <span style={{ fontSize: '0.72rem', color: '#6a7b8c', marginTop: '0.25rem' }}>
+                Must fall in an open SAP posting period.
+              </span>
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Confirmation Type</label>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={isFinal} onChange={e => setIsFinal(e.target.checked)} />
+                  <span>Final Confirmation (CNF)</span>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '0.5rem' }}>
+              <button type="button" className="sap-btn sap-btn-secondary" onClick={() => { setSelectedOp(null); setSelectedOrder(null); }}>Cancel</button>
+              <button type="submit" className="sap-btn sap-btn-primary" disabled={confirmOpMutation.isPending}>
+                {confirmOpMutation.isPending ? 'Confirming...' : 'Save Confirmation'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Grid list of active orders & operations */}
-      {filteredActiveOrders.length === 0 ? (
+      {activeOrders.length === 0 ? (
         <div className="sap-card" style={{ padding: '3rem', textAlign: 'center', color: '#666' }}>
           <AlertCircle size={32} color="#666" style={{ marginBottom: '0.5rem', display: 'inline' }} />
-          <div style={{ marginTop: '0.5rem' }}>No active production orders found matching filters.</div>
-          <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>Try clearing filters or release/start orders in the Production Orders page.</div>
+          <div style={{ marginTop: '0.5rem' }}>No production orders are currently in active shop floor execution.</div>
+          <div style={{ fontSize: '0.85rem', color: '#888', marginTop: '0.25rem' }}>Go to Production Orders to release and start orders first.</div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          {filteredActiveOrders.map((order: any) => (
+          {activeOrders.map((order: any) => (
             <div className="sap-card" key={order.ID}>
               <div className="sap-card-header">
                 <div>
@@ -231,7 +210,7 @@ export const Operations: React.FC = () => {
                     {order.operations?.map((op: any) => {
                       const priorOps = order.operations.filter((o: any) => o.sequence < op.sequence);
                       const isPriorConfirmed = priorOps.every((o: any) => o.status === 'CNF');
-                      const isConfirmable = isPriorConfirmed && op.status !== 'CNF' && (order.status === 'REL' || order.status === 'STRT' || order.status === 'PCNF');
+                      const isConfirmable = isPriorConfirmed && op.status !== 'CNF' && (order.status === 'STRT' || order.status === 'PCNF');
 
                       return (
                         <tr key={op.ID}>
@@ -263,56 +242,6 @@ export const Operations: React.FC = () => {
                   </tbody>
                 </table>
               </div>
-
-              {/* Inline Dialog for Recording Confirmation */}
-              {selectedOp && selectedOrder?.ID === order.ID && (
-                <div className="sap-card" style={{ marginTop: '1.5rem', border: '1px solid #0a6ed1', backgroundColor: 'var(--sap-bg-color)' }}>
-                  <div className="sap-card-header">
-                    <h4 style={{ fontSize: '1rem', fontWeight: 700 }}>Record Time & Yield: Op {selectedOp.sequence} ({selectedOp.description})</h4>
-                  </div>
-                  <form onSubmit={handleConfirmSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem' }}>
-                    <div className="sap-form-group">
-                      <label className="sap-label">Yield Quantity (PC) *</label>
-                      <input type="number" className="sap-input" value={yieldQty} onChange={e => setYieldQty(e.target.value)} min="0" required />
-                    </div>
-
-                    <div className="sap-form-group">
-                      <label className="sap-label">Scrap Quantity (PC) *</label>
-                      <input type="number" className="sap-input" value={scrapQty} onChange={e => setScrapQty(e.target.value)} min="0" required />
-                    </div>
-
-                    <div className="sap-form-group">
-                      <label className="sap-label">Labor/Machine Time Spent (Min) *</label>
-                      <input type="number" className="sap-input" value={timeSpent} onChange={e => setTimeSpent(e.target.value)} min="0" required />
-                    </div>
-
-                    <div className="sap-form-group">
-                      <label className="sap-label">Posting Date *</label>
-                      <input type="date" className="sap-input" value={postingDate} onChange={e => setPostingDate(e.target.value)} required />
-                      <span style={{ fontSize: '0.72rem', color: '#6a7b8c', marginTop: '0.25rem' }}>
-                        Must fall in an open SAP posting period.
-                      </span>
-                    </div>
-
-                    <div className="sap-form-group">
-                      <label className="sap-label">Confirmation Type</label>
-                      <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                          <input type="checkbox" checked={isFinal} onChange={e => setIsFinal(e.target.checked)} />
-                          <span>Final Confirmation (CNF)</span>
-                        </label>
-                      </div>
-                    </div>
-
-                    <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '0.5rem' }}>
-                      <button type="button" className="sap-btn sap-btn-secondary" onClick={() => { setSelectedOp(null); setSelectedOrder(null); }}>Cancel</button>
-                      <button type="submit" className="sap-btn sap-btn-primary" disabled={confirmOpMutation.isPending}>
-                        {confirmOpMutation.isPending ? 'Confirming...' : 'Save Confirmation'}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
             </div>
           ))}
         </div>

@@ -62,67 +62,43 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI Tiles (Standard SAP Fiori Style - Clickable to navigate with filters) */}
+      {/* KPI Tiles (Standard SAP Fiori Style) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
-        <Link 
-          to="/orders" 
-          state={{ status: 'DRAFT' }}
-          style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-        >
-          <div className="sap-card" style={{ borderLeft: '4px solid #5c6b77', height: '100%', transition: 'all 0.2s' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#5c6b77', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Draft Planning Orders</span>
-              <FileText size={18} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{draft}</div>
-            <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>Awaiting BOM/Routing explosion</div>
+        <div className="sap-card" style={{ borderLeft: '4px solid #5c6b77' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#5c6b77', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Draft Planning Orders</span>
+            <FileText size={18} />
           </div>
-        </Link>
- 
-        <Link 
-          to="/orders" 
-          state={{ status: 'CRTD' }}
-          style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-        >
-          <div className="sap-card" style={{ borderLeft: '4px solid #0d6efd', height: '100%', transition: 'all 0.2s' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0d6efd', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Created Orders (CRTD)</span>
-              <ClipboardList size={18} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{created}</div>
-            <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>BOM exploded, awaiting release</div>
+          <div style={{ fontSize: '2rem', fontWeight: 700 }}>{draft}</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>Awaiting BOM/Routing explosion</div>
+        </div>
+
+        <div className="sap-card" style={{ borderLeft: '4px solid #0d6efd' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0d6efd', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Created Orders (CRTD)</span>
+            <ClipboardList size={18} />
           </div>
-        </Link>
- 
-        <Link 
-          to="/orders" 
-          state={{ status: 'STRT' }}
-          style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-        >
-          <div className="sap-card" style={{ borderLeft: '4px solid #1c7ed6', height: '100%', transition: 'all 0.2s' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1c7ed6', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Active in Execution</span>
-              <Play size={18} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{inProgress}</div>
-            <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>Shop floor operations active</div>
+          <div style={{ fontSize: '2rem', fontWeight: 700 }}>{created}</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>BOM exploded, awaiting release</div>
+        </div>
+
+        <div className="sap-card" style={{ borderLeft: '4px solid #1c7ed6' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1c7ed6', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Active in Execution</span>
+            <Play size={18} />
           </div>
-        </Link>
- 
-        <Link 
-          to="/orders" 
-          state={{ status: 'TECO' }}
-          style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-        >
-          <div className="sap-card" style={{ borderLeft: '4px solid #37b24d', height: '100%', transition: 'all 0.2s' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#37b24d', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Technically Completed</span>
-              <CheckCircle2 size={18} />
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 700 }}>{completed}</div>
-            <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>GR posted, variance settled</div>
+          <div style={{ fontSize: '2rem', fontWeight: 700 }}>{inProgress}</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>Shop floor operations active</div>
+        </div>
+
+        <div className="sap-card" style={{ borderLeft: '4px solid #37b24d' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#37b24d', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Technically Completed</span>
+            <CheckCircle2 size={18} />
           </div>
-        </Link>
+          <div style={{ fontSize: '2rem', fontWeight: 700 }}>{completed}</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>GR posted, variance settled</div>
+        </div>
       </div>
 
       <div className="sap-grid-2">
@@ -142,48 +118,27 @@ export const Dashboard: React.FC = () => {
               </div>
             ) : (
               recentAlerts.map((n: any) => (
-                <Link 
-                  key={n.ID} 
-                  to="/operations" 
-                  state={{ search: n.order?.orderNumber }}
-                  style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}
-                >
-                  <div 
-                    style={{
-                      display: 'flex',
-                      gap: '0.75rem',
-                      padding: '0.75rem',
-                      backgroundColor: n.type === 'ALERT' ? '#fff9db' : '#f8f9fa',
-                      border: `1px solid ${n.type === 'ALERT' ? '#ffe066' : '#dee2e6'}`,
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease'
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.borderColor = n.type === 'ALERT' ? '#f08c00' : '#0a6ed1';
-                      e.currentTarget.style.transform = 'translateY(-1px)';
-                      e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)';
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.borderColor = n.type === 'ALERT' ? '#ffe066' : '#dee2e6';
-                      e.currentTarget.style.transform = 'none';
-                      e.currentTarget.style.boxShadow = 'none';
-                    }}
-                  >
-                    {n.type === 'ALERT' ? (
-                      <AlertTriangle size={18} color="#f08c00" style={{ flexShrink: 0 }} />
-                    ) : (
-                      <Bell size={18} color="#0a6ed1" style={{ flexShrink: 0 }} />
-                    )}
-                    <div>
-                      <div style={{ fontWeight: 600, color: '#333' }}>
-                        Order {n.order?.orderNumber || 'Unknown'}
-                      </div>
-                      <div style={{ color: '#555', marginTop: '0.2rem' }}>{n.message}</div>
+                <div key={n.ID} style={{
+                  display: 'flex',
+                  gap: '0.75rem',
+                  padding: '0.75rem',
+                  backgroundColor: n.type === 'ALERT' ? '#fff9db' : '#f8f9fa',
+                  border: `1px solid ${n.type === 'ALERT' ? '#ffe066' : '#dee2e6'}`,
+                  borderRadius: '6px',
+                  fontSize: '0.85rem'
+                }}>
+                  {n.type === 'ALERT' ? (
+                    <AlertTriangle size={18} color="#f08c00" style={{ flexShrink: 0 }} />
+                  ) : (
+                    <Bell size={18} color="#0a6ed1" style={{ flexShrink: 0 }} />
+                  )}
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#333' }}>
+                      Order {n.order?.orderNumber || 'Unknown'}
                     </div>
+                    <div style={{ color: '#555', marginTop: '0.2rem' }}>{n.message}</div>
                   </div>
-                </Link>
+                </div>
               ))
             )}
           </div>

@@ -1,49 +1,28 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, Filter, Calendar, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Filter, Calendar, Layers } from 'lucide-react';
 
 export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const location = useLocation();
-  
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<string>(() => {
-    return location.state?.status || 'ALL';
-  });
-  const [filterPlant, setFilterPlant] = useState('ALL');
-  const [filterStartDate, setFilterStartDate] = useState('');
-  const [filterEndDate, setFilterEndDate] = useState('');
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [sortField, setSortField] = useState<string>('orderNumber');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-
-  React.useEffect(() => {
-    if (location.state?.status) {
-      setFilterStatus(location.state.status);
-    }
-  }, [location.state]);
+  const [filterStatus, setFilterStatus] = useState('ALL');
 
   // Creation form state
   const [materialId, setMaterialId] = useState('');
   const [plantId, setPlantId] = useState('');
-  const [planningPlantId, setPlanningPlantId] = useState('');
-  const [orderType, setOrderType] = useState('ZPPS');
   const [slocId, setSlocId] = useState('');
   const [targetQty, setTargetQty] = useState('100');
   const [plannedStartDate, setPlannedStartDate] = useState('');
   const [plannedEndDate, setPlannedEndDate] = useState('');
-  const [schedulingType, setSchedulingType] = useState('Backwards');
-  const [priority, setPriority] = useState('');
-  const [schedMarginKey, setSchedMarginKey] = useState('001');
-  const [floatBeforeProd, setFloatBeforeProd] = useState('2');
-  const [floatAfterProd, setFloatAfterProd] = useState('1');
-  const [releasePeriod, setReleasePeriod] = useState('5');
   const [initialStatus, setInitialStatus] = useState('CRTD'); // CRTD or DRAFT
+  const [orderType, setOrderType] = useState('ZPPS');
+  const [schedulingType, setSchedulingType] = useState('forward');
+  const [capacityCheck, setCapacityCheck] = useState(false);
+  const [qualityInspection, setQualityInspection] = useState(false);
   const [formError, setFormError] = useState('');
 
   // Queries
@@ -88,32 +67,21 @@ export const ProductionOrders: React.FC = () => {
       const res = await api.post('/odata/v4/production/ProductionOrders', newOrder);
       return res.data;
     },
-    onSuccess: (data: any) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ordersList'] });
       setShowCreateForm(false);
       // Reset form
       setMaterialId('');
       setPlantId('');
-      setPlanningPlantId('');
-      setOrderType('ZPPS');
       setSlocId('');
       setTargetQty('100');
       setPlannedStartDate('');
       setPlannedEndDate('');
-      setSchedulingType('Backwards');
-      setPriority('');
-      setSchedMarginKey('001');
-      setFloatBeforeProd('2');
-      setFloatAfterProd('1');
-      setReleasePeriod('5');
+      setOrderType('ZPPS');
+      setSchedulingType('forward');
+      setCapacityCheck(false);
+      setQualityInspection(false);
       setFormError('');
-      
-      // Show success toast
-      setToast({
-        message: `Production Order ${data.orderNumber || ''} created successfully in SAP S/4HANA!`,
-        type: 'success'
-      });
-      setTimeout(() => setToast(null), 5000);
     },
     onError: (err: any) => {
       const errMsg = err.response?.data?.error?.message || 'Failed to create order.';
@@ -121,77 +89,13 @@ export const ProductionOrders: React.FC = () => {
     }
   });
 
-  const calculateStartDateFromEnd = (endVal: string, floatBefore: string) => {
-    if (!endVal) return;
-    try {
-      const endD = new Date(endVal);
-      const days = parseInt(floatBefore, 10) || 0;
-      endD.setDate(endD.getDate() - days);
-      setPlannedStartDate(endD.toISOString().split('T')[0]);
-    } catch (e) {
-      // Ignore parsing errors
-    }
-  };
-
-  const calculateEndDateFromStart = (startVal: string, floatAfter: string) => {
-    if (!startVal) return;
-    try {
-      const startD = new Date(startVal);
-      const days = parseInt(floatAfter, 10) || 0;
-      startD.setDate(startD.getDate() + days);
-      setPlannedEndDate(startD.toISOString().split('T')[0]);
-    } catch (e) {
-      // Ignore parsing errors
-    }
-  };
-
-  // Unified scheduling engine: sync and auto-fill dates based on selected scheduling type and float margin configurations
-  React.useEffect(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (schedulingType === 'Current date' || schedulingType === 'Current date-time') {
-      if (plannedStartDate !== todayStr) setPlannedStartDate(todayStr);
-      if (plannedEndDate !== todayStr) setPlannedEndDate(todayStr);
-    } else if (schedulingType === 'Backwards' || schedulingType === 'Backwards in time') {
-      if (!plannedEndDate) {
-        setPlannedEndDate(todayStr);
-        calculateStartDateFromEnd(todayStr, floatBeforeProd);
-      } else {
-        calculateStartDateFromEnd(plannedEndDate, floatBeforeProd);
-      }
-    } else if (schedulingType === 'Forwards' || schedulingType === 'Forwards in time') {
-      if (!plannedStartDate) {
-        setPlannedStartDate(todayStr);
-        calculateEndDateFromStart(todayStr, floatAfterProd);
-      } else {
-        calculateEndDateFromStart(plannedStartDate, floatAfterProd);
-      }
-    }
-  }, [schedulingType, plannedStartDate, plannedEndDate, floatBeforeProd, floatAfterProd]);
-
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
-    if (!materialId || !plantId || !slocId || !targetQty) {
+    if (!materialId || !plantId || !slocId || !targetQty || !plannedStartDate || !plannedEndDate) {
       setFormError('Please fill out all mandatory fields.');
       return;
-    }
-
-    if (schedulingType === 'Forwards' || schedulingType === 'Forwards in time') {
-      if (!plannedStartDate) {
-        setFormError('Forward scheduling (enter start date)');
-        return;
-      }
-    } else if (schedulingType === 'Backwards' || schedulingType === 'Backwards in time') {
-      if (!plannedEndDate) {
-        setFormError('Backward scheduling (enter end date)');
-        return;
-      }
-    } else {
-      if (!plannedStartDate || !plannedEndDate) {
-        setFormError('Please enter both start and end dates.');
-        return;
-      }
     }
 
     if (parseFloat(targetQty) <= 0) {
@@ -214,116 +118,16 @@ export const ProductionOrders: React.FC = () => {
       status: initialStatus,
       plannedStartDate,
       plannedEndDate,
-      orderType
+      orderType,
+      schedulingType,
+      isCapacityChecked: capacityCheck,
+      isInspectionRequired: qualityInspection
     });
   };
 
-  const filteredOrders = orders?.filter((o: any) => {
-    // 1. Status Filter
-    if (filterStatus !== 'ALL' && !o.status?.split(' ').includes(filterStatus)) return false;
-
-    // 2. Plant Filter
-    if (filterPlant !== 'ALL' && o.plant_ID !== filterPlant) return false;
-
-    // 3. Date Filters
-    if (filterStartDate && o.plannedStartDate && o.plannedStartDate < filterStartDate) return false;
-    if (filterEndDate && o.plannedEndDate && o.plannedEndDate > filterEndDate) return false;
-
-    // 4. Search query matching orderNumber, material code/description, plant code/name
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchOrder = o.orderNumber?.toLowerCase().includes(q);
-      const matchMatCode = o.material?.code?.toLowerCase().includes(q);
-      const matchMatDesc = o.material?.description?.toLowerCase().includes(q);
-      const matchPlant = o.plant?.code?.toLowerCase().includes(q) || o.plant?.name?.toLowerCase().includes(q);
-      
-      if (!matchOrder && !matchMatCode && !matchMatDesc && !matchPlant) return false;
-    }
-
-    return true;
-  });
-
-
-
-  // Sort the filtered orders
-  const sortedOrders = [...(filteredOrders || [])].sort((a: any, b: any) => {
-    if (sortField === 'orderNumber') {
-      const aNum = parseInt(a.orderNumber, 10);
-      const bNum = parseInt(b.orderNumber, 10);
-      const aIsNum = !isNaN(aNum);
-      const bIsNum = !isNaN(bNum);
-
-      if (aIsNum && bIsNum) {
-        return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
-      } else if (aIsNum && !bIsNum) {
-        return -1; // Numeric comes first
-      } else if (!aIsNum && bIsNum) {
-        return 1;  // Numeric comes first
-      } else {
-        const aVal = String(a.orderNumber).toLowerCase();
-        const bVal = String(b.orderNumber).toLowerCase();
-        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
-        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-        return 0;
-      }
-    }
-
-    let aVal: any = '';
-    let bVal: any = '';
-
-    if (sortField === 'material') {
-      aVal = a.material?.code || '';
-      bVal = b.material?.code || '';
-    } else if (sortField === 'plant') {
-      aVal = a.plant?.code || '';
-      bVal = b.plant?.code || '';
-    } else if (sortField === 'targetQty') {
-      aVal = parseFloat(a.targetQty) || 0;
-      bVal = parseFloat(b.targetQty) || 0;
-    } else if (sortField === 'confirmedQty') {
-      aVal = parseFloat(a.confirmedQty) || 0;
-      bVal = parseFloat(b.confirmedQty) || 0;
-    } else if (sortField === 'deliveredQty') {
-      aVal = parseFloat(a.deliveredQty) || 0;
-      bVal = parseFloat(b.deliveredQty) || 0;
-    } else if (sortField === 'status') {
-      aVal = a.status || '';
-      bVal = b.status || '';
-    } else if (sortField === 'plannedStartDate') {
-      aVal = a.plannedStartDate || '';
-      bVal = b.plannedStartDate || '';
-    } else if (sortField === 'plannedEndDate') {
-      aVal = a.plannedEndDate || '';
-      bVal = b.plannedEndDate || '';
-    } else if (sortField === 'creationDate') {
-      aVal = a.creationDate || '';
-      bVal = b.creationDate || '';
-    }
-
-    if (typeof aVal === 'number' && typeof bVal === 'number') {
-      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
-    } else {
-      aVal = String(aVal).toLowerCase();
-      bVal = String(bVal).toLowerCase();
-      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    }
-  });
-
-  // Dynamically extract actual Order Types present in the live orders fetched from SAP S/4HANA
-  const uniqueOrderTypes = React.useMemo(() => {
-    const types = new Set<string>();
-    orders?.forEach((o: any) => {
-      if (o.orderType) {
-        types.add(o.orderType);
-      }
-    });
-    // Ensure standard defaults ZPPS and YBM1 are always available if no orders exist yet
-    types.add('ZPPS');
-    types.add('YBM1');
-    return Array.from(types);
-  }, [orders]);
+  const filteredOrders = filterStatus === 'ALL' 
+    ? orders 
+    : orders?.filter((o: any) => o.status === filterStatus);
 
   if (ordersLoading) {
     return (
@@ -371,181 +175,106 @@ export const ProductionOrders: React.FC = () => {
               {formError}
             </div>
           )}
-          <form onSubmit={handleCreateOrder} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            {/* Group 1: Initial Screen Parameters */}
-            <div>
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--sap-text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>1. Initial Screen Parameters</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', borderBottom: '1px solid #eee', paddingBottom: '1.25rem' }}>
-                <div className="sap-form-group">
-                  <label className="sap-label">Order Type *</label>
-                  <select className="sap-input" value={orderType} onChange={e => setOrderType(e.target.value)} required>
-                    {uniqueOrderTypes.map(t => (
-                      <option key={t} value={t}>{t} - {t === 'ZPPS' ? 'Standard Production Order' : 'Custom Production Order'}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Material *</label>
-                  <select className="sap-input" value={materialId} onChange={e => setMaterialId(e.target.value)} required>
-                    <option value="">-- Select Material --</option>
-                    {finishedMaterials?.map((m: any) => (
-                      <option key={m.ID} value={m.ID}>{m.code} - {m.description}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Production Plant *</label>
-                  <select className="sap-input" value={plantId} onChange={e => { 
-                    setPlantId(e.target.value); 
-                    setPlanningPlantId(e.target.value); // Default planning plant to same as production plant
-                    setSlocId(''); 
-                  }} required>
-                    <option value="">-- Select Plant --</option>
-                    {plants?.map((p: any) => (
-                      <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Planning Plant</label>
-                  <select className="sap-input" value={planningPlantId} onChange={e => setPlanningPlantId(e.target.value)}>
-                    <option value="">-- Same as Production Plant --</option>
-                    {plants?.map((p: any) => (
-                      <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
-                    ))}
-                  </select>
-                </div>
+          <form onSubmit={handleCreateOrder} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
+            <div className="sap-form-group">
+              <label className="sap-label">Finished Material *</label>
+              <select className="sap-input" value={materialId} onChange={e => setMaterialId(e.target.value)} required>
+                <option value="">-- Select Material --</option>
+                {finishedMaterials?.map((m: any) => (
+                  <option key={m.ID} value={m.ID}>{m.code} - {m.description}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Production Plant *</label>
+              <select className="sap-input" value={plantId} onChange={e => { setPlantId(e.target.value); setSlocId(''); }} required>
+                <option value="">-- Select Plant --</option>
+                {plants?.map((p: any) => (
+                  <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Storage Location *</label>
+              <select className="sap-input" value={slocId} onChange={e => setSlocId(e.target.value)} required disabled={!plantId}>
+                <option value="">-- Select Storage --</option>
+                {filteredSlocs.map((s: any) => (
+                  <option key={s.ID} value={s.ID}>{s.code} - {s.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Target Quantity *</label>
+              <input type="number" className="sap-input" value={targetQty} onChange={e => setTargetQty(e.target.value)} min="1" required />
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Planned Start Date *</label>
+              <input type="date" className="sap-input" value={plannedStartDate} onChange={e => setPlannedStartDate(e.target.value)} required />
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Planned End Date *</label>
+              <input type="date" className="sap-input" value={plannedEndDate} onChange={e => setPlannedEndDate(e.target.value)} required />
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Order Type *</label>
+              <select className="sap-input" value={orderType} onChange={e => setOrderType(e.target.value)} required>
+                <option value="ZPPS">ZPPS - Standard Production Order</option>
+                <option value="YBM1">YBM1 - Make-to-Stock Production</option>
+                <option value="YBM2">YBM2 - Rework Order</option>
+                <option value="YBM3">YBM3 - Teardown Order</option>
+              </select>
+            </div>
+
+            <div className="sap-form-group">
+              <label className="sap-label">Scheduling *</label>
+              <select className="sap-input" value={schedulingType} onChange={e => setSchedulingType(e.target.value)} required>
+                <option value="current">Current</option>
+                <option value="backward">Backward</option>
+                <option value="forward">Forward</option>
+                <option value="backward_time">Backward in time</option>
+                <option value="forward_time">Forward in time</option>
+              </select>
+            </div>
+
+            <div className="sap-form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="sap-label">Additional Checks</label>
+              <div style={{ display: 'flex', gap: '2rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={capacityCheck} onChange={e => setCapacityCheck(e.target.checked)} />
+                  <span>Capacity check (machines available)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={qualityInspection} onChange={e => setQualityInspection(e.target.checked)} />
+                  <span>Post production inspection (QM)</span>
+                </label>
               </div>
             </div>
 
-            {/* Group 2: Scheduling, Quantities & Dates (General Tab) */}
-            <div>
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--sap-text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>2. Scheduling, Quantities & Dates (General Tab)</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', borderBottom: '1px solid #eee', paddingBottom: '1.25rem' }}>
-                <div className="sap-form-group">
-                  <label className="sap-label">Scheduling Type</label>
-                  <select className="sap-input" value={schedulingType} onChange={e => setSchedulingType(e.target.value)}>
-                    <option value="Forwards">Forwards</option>
-                    <option value="Backwards">Backwards</option>
-                    <option value="Only capacity requirements">Only capacity requirements</option>
-                    <option value="Current date">Current date</option>
-                    <option value="Forwards in time">Forwards in time</option>
-                    <option value="Backwards in time">Backwards in time</option>
-                    <option value="Capacity requirements & time">Capacity requirements & time</option>
-                    <option value="Current date-time">Current date-time</option>
-                  </select>
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Total Qty * (PC)</label>
-                  <input type="number" className="sap-input" value={targetQty} onChange={e => setTargetQty(e.target.value)} min="1" required />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Storage Location *</label>
-                  <select className="sap-input" value={slocId} onChange={e => setSlocId(e.target.value)} required disabled={!plantId}>
-                    <option value="">-- Select Storage --</option>
-                    {filteredSlocs.map((s: any) => (
-                      <option key={s.ID} value={s.ID}>{s.code} - {s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">
-                    Start Date 
-                    {(schedulingType === 'Forwards' || schedulingType === 'Forwards in time') ? ' *' : ' (Calculated)'}
-                  </label>
-                  <input 
-                    type="date" 
-                    className="sap-input" 
-                    value={plannedStartDate} 
-                    onChange={e => {
-                      setPlannedStartDate(e.target.value);
-                      if (schedulingType === 'Forwards' || schedulingType === 'Forwards in time') {
-                        calculateEndDateFromStart(e.target.value, floatAfterProd);
-                      }
-                    }} 
-                    required={schedulingType === 'Forwards' || schedulingType === 'Forwards in time'} 
-                    disabled={schedulingType === 'Backwards' || schedulingType === 'Backwards in time' || schedulingType === 'Current date' || schedulingType === 'Current date-time'}
-                    style={{
-                      border: formError.includes('Forward scheduling') ? '1.5px solid #d32f2f' : '1px solid var(--sap-border-color)',
-                      backgroundColor: (schedulingType === 'Backwards' || schedulingType === 'Backwards in time' || schedulingType === 'Current date' || schedulingType === 'Current date-time') ? '#f3f4f5' : '#ffffff'
-                    }}
-                  />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">
-                    End Date 
-                    {(schedulingType === 'Backwards' || schedulingType === 'Backwards in time') ? ' *' : ' (Calculated)'}
-                  </label>
-                  <input 
-                    type="date" 
-                    className="sap-input" 
-                    value={plannedEndDate} 
-                    onChange={e => {
-                      setPlannedEndDate(e.target.value);
-                      if (schedulingType === 'Backwards' || schedulingType === 'Backwards in time') {
-                        calculateStartDateFromEnd(e.target.value, floatBeforeProd);
-                      }
-                    }} 
-                    required={schedulingType === 'Backwards' || schedulingType === 'Backwards in time'} 
-                    disabled={schedulingType === 'Forwards' || schedulingType === 'Forwards in time' || schedulingType === 'Current date' || schedulingType === 'Current date-time'}
-                    style={{
-                      border: formError.includes('Backward scheduling') ? '1.5px solid #d32f2f' : '1px solid var(--sap-border-color)',
-                      backgroundColor: (schedulingType === 'Forwards' || schedulingType === 'Forwards in time' || schedulingType === 'Current date' || schedulingType === 'Current date-time') ? '#f3f4f5' : '#ffffff'
-                    }}
-                  />
-                </div>
+            <div className="sap-form-group">
+              <label className="sap-label">BOM/Routing Explosion Status</label>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                  <input type="radio" name="initialStatus" checked={initialStatus === 'CRTD'} onChange={() => setInitialStatus('CRTD')} />
+                  <span>Explode Immediately (CRTD)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
+                  <input type="radio" name="initialStatus" checked={initialStatus === 'DRAFT'} onChange={() => setInitialStatus('DRAFT')} />
+                  <span>Save Draft (DRAFT)</span>
+                </label>
               </div>
             </div>
 
-            {/* Group 3: Scheduling Margin Key & Floats */}
-            <div>
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--sap-text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>3. Scheduling Margin Key & Floats</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
-                <div className="sap-form-group">
-                  <label className="sap-label">Sched. Margin Key</label>
-                  <input type="text" className="sap-input" value={schedMarginKey} onChange={e => setSchedMarginKey(e.target.value)} placeholder="001" maxLength={3} />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Float Before Production (Workdays)</label>
-                  <input type="number" className="sap-input" value={floatBeforeProd} onChange={e => setFloatBeforeProd(e.target.value)} min="0" />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Float After Production (Workdays)</label>
-                  <input type="number" className="sap-input" value={floatAfterProd} onChange={e => setFloatAfterProd(e.target.value)} min="0" />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Release Period (Workdays)</label>
-                  <input type="number" className="sap-input" value={releasePeriod} onChange={e => setReleasePeriod(e.target.value)} min="0" />
-                </div>
-                <div className="sap-form-group">
-                  <label className="sap-label">Priority</label>
-                  <input type="number" className="sap-input" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" min="0" style={{ height: '36px' }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Radio explosion controls & Action Buttons */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', borderTop: '1px solid #eee', paddingTop: '1.25rem', marginTop: '0.5rem' }}>
-              <div className="sap-form-group" style={{ marginBottom: 0 }}>
-                <label className="sap-label" style={{ display: 'block', marginBottom: '0.25rem' }}>BOM/Routing Explosion Status</label>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                    <input type="radio" name="initialStatus" checked={initialStatus === 'CRTD'} onChange={() => setInitialStatus('CRTD')} />
-                    <span>Explode Immediately (CRTD)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}>
-                    <input type="radio" name="initialStatus" checked={initialStatus === 'DRAFT'} onChange={() => setInitialStatus('DRAFT')} />
-                    <span>Save Draft (DRAFT)</span>
-                  </label>
-                </div>
-              </div>
-              
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button type="button" className="sap-btn sap-btn-secondary" onClick={() => setShowCreateForm(false)}>Cancel</button>
-                <button type="submit" className="sap-btn sap-btn-primary" disabled={createOrderMutation.isPending}>
-                  {createOrderMutation.isPending ? 'Processing...' : 'Create Order'}
-                </button>
-              </div>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '0.5rem' }}>
+              <button type="button" className="sap-btn sap-btn-secondary" onClick={() => setShowCreateForm(false)}>Cancel</button>
+              <button type="submit" className="sap-btn sap-btn-primary" disabled={createOrderMutation.isPending}>
+                {createOrderMutation.isPending ? 'Processing...' : 'Create Order'}
+              </button>
             </div>
           </form>
         </div>
@@ -553,220 +282,33 @@ export const ProductionOrders: React.FC = () => {
 
       {/* Filter and Table Panel */}
       <div className="sap-card">
-        {/* Advanced Search & Filtering Panel */}
-        <div style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', borderBottom: '1px solid var(--sap-border-color)', paddingBottom: '1.25rem' }}>
-          
-          {/* Controls Row */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', alignItems: 'end' }}>
-            
-            {/* Universal Search */}
-            <div className="sap-form-group" style={{ marginBottom: 0 }}>
-              <label className="sap-label">Search Orders</label>
-              <input 
-                type="text" 
-                className="sap-input" 
-                placeholder="Order #, Material, Plant..." 
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
-            </div>
-
-            {/* Plant Filter */}
-            <div className="sap-form-group" style={{ marginBottom: 0 }}>
-              <label className="sap-label">Filter by Plant</label>
-              <select 
-                className="sap-input" 
-                value={filterPlant} 
-                onChange={e => setFilterPlant(e.target.value)}
+        {/* Filter Bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', fontWeight: 600, color: '#555' }}>
+            <Filter size={16} />
+            <span>Filter Status:</span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {['ALL', 'DRAFT', 'CRTD', 'MACA', 'REL', 'STRT', 'GI', 'INSP', 'CNF', 'GR', 'TECO', 'CLSD'].map((st) => (
+              <button
+                key={st}
+                onClick={() => setFilterStatus(st)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '12px',
+                  border: '1px solid #ced4da',
+                  backgroundColor: filterStatus === st ? '#0a6ed1' : '#ffffff',
+                  color: filterStatus === st ? '#ffffff' : '#495057',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s'
+                }}
               >
-                <option value="ALL">All Plants</option>
-                {plants?.map((p: any) => (
-                  <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Date Range Start */}
-            <div className="sap-form-group" style={{ marginBottom: 0 }}>
-              <label className="sap-label">Start Date</label>
-              <div style={{ position: 'relative' }}>
-                <input 
-                  type="date" 
-                  className="sap-input" 
-                  value={filterStartDate}
-                  onChange={e => setFilterStartDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Date Range End */}
-            <div className="sap-form-group" style={{ marginBottom: 0 }}>
-              <label className="sap-label">End Date</label>
-              <div style={{ position: 'relative' }}>
-                <input 
-                  type="date" 
-                  className="sap-input" 
-                  value={filterEndDate}
-                  onChange={e => setFilterEndDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Sort Orders Section */}
-            <div className="sap-form-group" style={{ marginBottom: 0 }}>
-              <label className="sap-label">Sort Orders</label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <select 
-                  className="sap-input" 
-                  style={{ flex: 1 }}
-                  value={sortField} 
-                  onChange={e => setSortField(e.target.value)}
-                >
-                  <option value="orderNumber">Order</option>
-                  <option value="material">Product</option>
-                  <option value="plannedStartDate">Planned Start Date</option>
-                  <option value="plannedEndDate">Planned End Date</option>
-                  <option value="targetQty">Target Quantity</option>
-                  <option value="status">Execution Status</option>
-                  <option value="plant">Plant</option>
-                  <option value="creationDate">Created On</option>
-                </select>
-                <div style={{ display: 'flex', gap: '2px', backgroundColor: '#eef2f6', border: '1px solid var(--sap-border-color)', borderRadius: '6px', padding: '2px', height: '36px', boxSizing: 'border-box' }}>
-                  <button
-                    type="button"
-                    onClick={() => setSortDirection('asc')}
-                    style={{
-                      border: 'none',
-                      borderRadius: '4px',
-                      backgroundColor: sortDirection === 'asc' ? 'var(--sap-brand-color)' : 'transparent',
-                      color: sortDirection === 'asc' ? '#ffffff' : 'var(--sap-text-color)',
-                      padding: '0 10px',
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: 500,
-                      display: 'flex',
-                      alignItems: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Sort Ascending"
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSortDirection('desc')}
-                    style={{
-                      border: 'none',
-                      borderRadius: '4px',
-                      backgroundColor: sortDirection === 'desc' ? 'var(--sap-brand-color)' : 'transparent',
-                      color: sortDirection === 'desc' ? '#ffffff' : 'var(--sap-text-color)',
-                      padding: '0 10px',
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: 500,
-                      display: 'flex',
-                      alignItems: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Sort Descending"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Reset Button */}
-            <button 
-              type="button" 
-              className="sap-btn sap-btn-secondary"
-              style={{ height: '36px' }}
-              onClick={() => {
-                setSearchQuery('');
-                setFilterStatus('ALL');
-                setFilterPlant('ALL');
-                setFilterStartDate('');
-                setFilterEndDate('');
-                setSortField('orderNumber');
-                setSortDirection('desc');
-              }}
-            >
-              Reset Filters
-            </button>
+                {st}
+              </button>
+            ))}
           </div>
-
-          {/* Status Filters Toggle Row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--sap-text-secondary)' }}>
-              <Filter size={14} />
-              <span>Status:</span>
-            </div>
-            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {['ALL', 'DRAFT', 'CRTD', 'REL', 'CNF', 'PCNF', 'DLV', 'PRC', 'CSER', 'GMPS', 'MACM', 'RESA', 'VCAL', 'TECO', 'CLSD'].map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setFilterStatus(st)}
-                  style={{
-                    padding: '3px 8px',
-                    borderRadius: '12px',
-                    border: '1px solid var(--sap-border-color)',
-                    backgroundColor: filterStatus === st ? 'var(--sap-brand-color)' : 'var(--sap-surface-color)',
-                    color: filterStatus === st ? '#ffffff' : 'var(--sap-text-color)',
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'all var(--transition-fast)'
-                  }}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Active Filter Chips / Tags */}
-          {(searchQuery || filterStatus !== 'ALL' || filterPlant !== 'ALL' || filterStartDate || filterEndDate) && (
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.25rem' }}>
-              <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--sap-text-secondary)' }}>Active Filters:</span>
-              
-              {searchQuery && (
-                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  Query: "{searchQuery}"
-                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setSearchQuery('')}>×</span>
-                </span>
-              )}
-
-              {filterStatus !== 'ALL' && (
-                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  Status: {filterStatus}
-                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterStatus('ALL')}>×</span>
-                </span>
-              )}
-
-              {filterPlant !== 'ALL' && (
-                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  Plant: {plants?.find((p: any) => p.ID === filterPlant)?.code}
-                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterPlant('ALL')}>×</span>
-                </span>
-              )}
-
-              {filterStartDate && (
-                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  From: {filterStartDate}
-                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterStartDate('')}>×</span>
-                </span>
-              )}
-
-              {filterEndDate && (
-                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  To: {filterEndDate}
-                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterEndDate('')}>×</span>
-                </span>
-              )}
-            </div>
-          )}
-
         </div>
 
         {/* Table */}
@@ -787,12 +329,12 @@ export const ProductionOrders: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {sortedOrders.length === 0 ? (
+              {filteredOrders?.length === 0 ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', color: '#888', padding: '2rem' }}>No production orders found matching filter.</td>
                 </tr>
               ) : (
-                sortedOrders.map((o: any) => (
+                filteredOrders?.map((o: any) => (
                   <tr key={o.ID}>
                     <td style={{ fontWeight: 600, color: '#0a6ed1' }}>
                       <Link to={`/orders/${o.ID}`} style={{ textDecoration: 'none', color: 'inherit' }}>{o.orderNumber}</Link>
@@ -806,11 +348,7 @@ export const ProductionOrders: React.FC = () => {
                     <td>{parseFloat(o.confirmedQty).toFixed(0)} PC</td>
                     <td>{parseFloat(o.deliveredQty).toFixed(0)} PC</td>
                     <td>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxWidth: '240px' }}>
-                        {(o.status || '').split(' ').map((st: string) => (
-                          <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
-                        ))}
-                      </div>
+                      <span className={`sap-badge sap-badge-${o.status}`}>{o.status}</span>
                     </td>
                     <td>{o.plannedStartDate}</td>
                     <td>{o.plannedEndDate}</td>
@@ -826,53 +364,6 @@ export const ProductionOrders: React.FC = () => {
           </table>
         </div>
       </div>
-
-      {/* Floating Toast Notification */}
-      {toast && (
-        <>
-          <style>{`
-            @keyframes slideIn {
-              from { transform: translateY(-100px); opacity: 0; }
-              to { transform: translateY(0); opacity: 1; }
-            }
-          `}</style>
-          <div style={{
-            position: 'fixed',
-            top: '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 9999,
-            backgroundColor: toast.type === 'success' ? '#10b981' : '#ef4444',
-            color: '#ffffff',
-            padding: '12px 24px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            fontWeight: 500,
-            fontSize: '0.9rem',
-            animation: 'slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
-          }}>
-            <span>{toast.message}</span>
-            <button 
-              onClick={() => setToast(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#ffffff',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                fontSize: '1.2rem',
-                padding: '0 4px',
-                lineHeight: 1
-              }}
-            >
-              ×
-            </button>
-          </div>
-        </>
-      )}
     </div>
   );
 };

@@ -1,0 +1,18 @@
+---
+applications:
+  - name: order-management-portal-srv
+    memory: 512M
+    disk_quota: 1024M
+    buildpacks:
+      - nodejs_buildpack
+    path: .
+    random-route: true
+    command: npm run start
+
+  - name: order-management-portal-ui
+    memory: 64M
+    disk_quota: 128M
+    buildpacks:
+      - staticfile_buildpack
+    path: ./app/dist
+    random-route: true

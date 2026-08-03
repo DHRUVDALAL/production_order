@@ -84,32 +84,6 @@ export const ShellBar: React.FC = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-        {/* SAP S/4HANA Cloud Connection Status heartbeat */}
-        <div 
-          style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.4rem', 
-            fontSize: '0.7rem', 
-            backgroundColor: 'rgba(40, 167, 69, 0.15)', 
-            padding: '4px 10px', 
-            borderRadius: '16px', 
-            border: '1px solid rgba(40, 167, 69, 0.3)',
-            cursor: 'default' // Fixed: Shows standard default arrow cursor on hover instead of help question mark
-          }} 
-          title="Live Connection: Connected to SAP S/4HANA Cloud (my421238) as PROD_API_USER"
-        >
-          <span className="heartbeat-dot" style={{ 
-            display: 'inline-block', 
-            width: '6px', 
-            height: '6px', 
-            borderRadius: '50%', 
-            backgroundColor: '#28a745',
-            boxShadow: '0 0 8px #28a745'
-          }}></span>
-          <span style={{ fontWeight: 700, color: '#28a745', letterSpacing: '0.3px' }}>SAP LIVE</span>
-        </div>
-
         <div style={{ textAlign: 'right', fontSize: '0.75rem' }}>
           <div style={{ fontWeight: 600 }}>{user.name}</div>
           <div style={{ opacity: 0.85 }}>{user.role.replace('_', ' ')} • {user.department}</div>

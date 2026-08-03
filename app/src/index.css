@@ -141,19 +141,12 @@ body {
 .sap-badge-STRT { background: var(--status-started-bg); color: var(--status-started-text); }
 .sap-badge-INSP { background: var(--status-inspect-bg); color: var(--status-inspect-text); }
 .sap-badge-CNF { background: var(--status-confirmed-bg); color: var(--status-confirmed-text); }
-.sap-badge-PCNF { background: #e6fcf5; color: #0ca678; }
 .sap-badge-DLV { background: var(--status-delivered-bg); color: var(--status-delivered-text); }
 .sap-badge-PDLV { background: var(--status-started-bg); color: var(--status-started-text); }
 .sap-badge-TECO { background: var(--status-complete-bg); color: var(--status-complete-text); }
 .sap-badge-CLSD { background: var(--status-complete-bg); color: var(--status-complete-text); }
 .sap-badge-GI { background: var(--status-started-bg); color: var(--status-started-text); }
 .sap-badge-GR { background: var(--status-delivered-bg); color: var(--status-delivered-text); }
-.sap-badge-PRC { background: #eef2f6; color: #475569; }
-.sap-badge-CSER { background: #fee2e2; color: #991b1b; }
-.sap-badge-GMPS { background: #e0f2fe; color: #0369a1; }
-.sap-badge-MACM { background: #f0fdf4; color: #166534; }
-.sap-badge-RESA { background: #f1f5f9; color: #64748b; }
-.sap-badge-VCAL { background: #f1f5f9; color: #64748b; }
 /* Fiori-styled forms */
 .sap-form-group {
   margin-bottom: 1.25rem;

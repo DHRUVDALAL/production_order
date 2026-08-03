@@ -62,17 +62,21 @@ async function runTests() {
         // STEP 2: Retrieve Master Data context
         // -------------------------------------------------------------
         console.log('Step 2: Retrieving manufacturing master data context...');
-        const matsRes = await apiCall("/odata/v4/production/Materials?$filter=materialGroup eq 'FINISHED'");
-        const plantsRes = await apiCall('/odata/v4/production/Plants');
-        const slocsRes = await apiCall('/odata/v4/production/StorageLocations');
+        const matsRes = await apiCall("/odata/v4/production/Materials?$filter=isSapSynced eq true");
+        const plantsRes = await apiCall("/odata/v4/production/Plants?$filter=isSapSynced eq true");
+        const slocsRes = await apiCall("/odata/v4/production/StorageLocations?$filter=isSapSynced eq true");
+
+        if (!plantsRes.value.length || !matsRes.value.length) {
+            throw new Error("No SAP-synced plants or materials found! Ensure the SAP sync has run at least once by starting the backend.");
+        }
 
         const testPlant = plantsRes.value[0];
-        const testMaterial = matsRes.value.find(m => m.plant_ID === testPlant.ID);
-        const testSloc = slocsRes.value.find(s => s.plant_ID === testPlant.ID && s.code === 'SL02');
+        const testMaterial = matsRes.value.find(m => m.plant_ID === testPlant.ID) || matsRes.value[0];
+        const testSloc = slocsRes.value.find(s => s.plant_ID === testPlant.ID) || { ID: null, code: '' };
 
         console.log(`- Material for order: ${testMaterial.code} (${testMaterial.description})`);
         console.log(`- Plant context: ${testPlant.code} - ${testPlant.name}`);
-        console.log(`- Finished storage stage: ${testSloc.code}\n`);
+        console.log(`- Finished storage stage: ${testSloc.code || 'None'}\n`);
 
         // -------------------------------------------------------------
         // STEP 3: Create a Production Order Draft
@@ -127,11 +131,12 @@ async function runTests() {
         console.log(`- Verification: Routing operations exploded: ${crtdDetails.operations.length} (Expected: 3)`);
         console.log(`- Verification: BOM components reserved: ${crtdDetails.components.length} (Expected: 3)`);
         
-        // Grab operation IDs for confirmations
-        testOp10Id = crtdDetails.operations.find(o => o.sequence === 10).ID;
-        testOp20Id = crtdDetails.operations.find(o => o.sequence === 20).ID;
-        testOp30Id = crtdDetails.operations.find(o => o.sequence === 30).ID;
-        console.log(`- Captured Operation 10 ID: ${testOp10Id}\n`);
+        // Grab operation IDs for confirmations dynamically
+        const operations = crtdDetails.operations.sort((a, b) => a.sequence - b.sequence);
+        if (!operations.length) {
+            throw new Error("No operations exploded from SAP! Ensure the material has a valid routing/production version.");
+        }
+        console.log(`- Captured ${operations.length} operations for confirmation.\n`);
 
         // -------------------------------------------------------------
         // STEP 5: Perform Material Availability Check (ATP)
@@ -147,7 +152,7 @@ async function runTests() {
         });
         
         const atp = atpRes.value || atpRes;
-        console.log(`- ATP check completed. Shortage count: ${atp.shortageCount} (Expected: 0 due to seeded raw stock)`);
+        console.log(`- ATP check completed. Shortage count: ${atp.shortageCount}`);
         
         const checkDetails = await apiCall(`/odata/v4/production/ProductionOrders(${testOrderId})`);
         console.log(`- Verification: Order Status is now: ${checkDetails.status} (Expected: MACA)\n`);
@@ -193,9 +198,35 @@ async function runTests() {
         // -------------------------------------------------------------
         console.log('Step 8: Enforcing routing operations validation rules...');
         
-        // Rule Validation Test: Confirming operation 20 before operation 10 must FAIL
-        try {
-            console.log('- Attempting to confirm Operation 20 out of sequence (should fail)...');
+        // Rule Validation Test: Confirming operation out of sequence must FAIL
+        if (operations.length > 1) {
+            try {
+                console.log(`- Attempting to confirm Operation ${operations[1].sequence} out of sequence (should fail)...`);
+                await apiCall('/odata/v4/production/confirmOperation', {
+                    method: 'POST',
+                    headers: {
+                        'x-user-id': operatorUserId,
+                        'x-user-role': 'PROD_OPERATOR'
+                    },
+                    body: JSON.stringify({
+                        orderId: testOrderId,
+                        operationId: operations[1].ID,
+                        yieldQty: 120.0,
+                        scrapQty: 0.0,
+                        timeSpent: 45.0,
+                        isFinalConfirmation: true
+                    })
+                });
+                throw new Error('TEST FAILED: Out-of-order confirmation succeeded when it should have failed!');
+            } catch (e) {
+                console.log(`- SUCCESS: Prior sequence check blocked confirmation correctly. Message: "${e.message}"`);
+            }
+        }
+
+        // Dynamically confirm all operations
+        for (let i = 0; i < operations.length; i++) {
+            const op = operations[i];
+            console.log(`- Posting Final Confirmation for Operation ${op.sequence}...`);
             await apiCall('/odata/v4/production/confirmOperation', {
                 method: 'POST',
                 headers: {
@@ -204,71 +235,14 @@ async function runTests() {
                 },
                 body: JSON.stringify({
                     orderId: testOrderId,
-                    operationId: testOp20Id,
+                    operationId: op.ID,
                     yieldQty: 120.0,
                     scrapQty: 0.0,
-                    timeSpent: 45.0,
+                    timeSpent: 25.0,
                     isFinalConfirmation: true
                 })
             });
-            throw new Error('TEST FAILED: Out-of-order confirmation succeeded when it should have failed!');
-        } catch (e) {
-            console.log(`- SUCCESS: Prior sequence check blocked confirmation correctly. Message: "${e.message}"`);
         }
-
-        // Confirm Operation 10
-        console.log('- Posting Final Confirmation for Operation 10 (CNC Milling)...');
-        await apiCall('/odata/v4/production/confirmOperation', {
-            method: 'POST',
-            headers: {
-                'x-user-id': operatorUserId,
-                'x-user-role': 'PROD_OPERATOR'
-            },
-            body: JSON.stringify({
-                orderId: testOrderId,
-                operationId: testOp10Id,
-                yieldQty: 120.0,
-                scrapQty: 0.0,
-                timeSpent: 25.0,
-                isFinalConfirmation: true
-            })
-        });
-
-        // Confirm Operation 20
-        console.log('- Posting Final Confirmation for Operation 20 (Assembly)...');
-        await apiCall('/odata/v4/production/confirmOperation', {
-            method: 'POST',
-            headers: {
-                'x-user-id': operatorUserId,
-                'x-user-role': 'PROD_OPERATOR'
-            },
-            body: JSON.stringify({
-                orderId: testOrderId,
-                operationId: testOp20Id,
-                yieldQty: 120.0,
-                scrapQty: 0.0,
-                timeSpent: 45.0,
-                isFinalConfirmation: true
-            })
-        });
-
-        // Confirm Operation 30 (Last operation - triggers inspection)
-        console.log('- Posting Final Confirmation for last Operation 30 (Testing)...');
-        await apiCall('/odata/v4/production/confirmOperation', {
-            method: 'POST',
-            headers: {
-                'x-user-id': operatorUserId,
-                'x-user-role': 'PROD_OPERATOR'
-            },
-            body: JSON.stringify({
-                orderId: testOrderId,
-                operationId: testOp30Id,
-                yieldQty: 120.0,
-                scrapQty: 0.0,
-                timeSpent: 15.0,
-                isFinalConfirmation: true
-            })
-        });
 
         const opDetails = await apiCall(`/odata/v4/production/ProductionOrders(${testOrderId})`);
         console.log(`- Verification: Confirmed operations status is now: ${opDetails.status} (Expected: INSP due to quality hold)`);

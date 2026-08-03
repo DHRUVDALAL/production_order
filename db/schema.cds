@@ -108,7 +108,6 @@ entity UserRoles : cuid, managed {
 
 entity ProductionOrders : cuid, managed {
     orderNumber     : String(12); // e.g. "100000000001"
-    orderType       : String(4);  // e.g. "ZPPS", "YBM1"
     material        : Association to Materials;
     plant           : Association to Plants;
     storageLocation : Association to StorageLocations;
@@ -116,6 +115,10 @@ entity ProductionOrders : cuid, managed {
     confirmedQty    : Decimal(15, 3) default 0;
     deliveredQty    : Decimal(15, 3) default 0;
     status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
+    orderType       : String(4) default 'ZPPS';
+    schedulingType  : String(20) default 'forward';
+    isCapacityChecked: Boolean default false;
+    isInspectionRequired: Boolean default false;
     plannedStartDate: Date;
     plannedEndDate  : Date;
     actualStartDate : DateTime;
@@ -142,6 +145,8 @@ entity OrderComponents : cuid, managed {
     order             : Association to ProductionOrders;
     componentMaterial : Association to Materials;
     requiredQty       : Decimal(15, 3);
+    availableQty      : Decimal(15, 3) default 0;
+    shortageQty       : Decimal(15, 3) default 0;
     issuedQty         : Decimal(15, 3) default 0;
     unit              : String(3) default 'PC';
     isBackflushed     : Boolean default false;

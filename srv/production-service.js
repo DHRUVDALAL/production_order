@@ -739,6 +739,227 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ----------------------------------------------------------------
+        // ACTION: Calculate Order Costs (Analysis, Itemization, Balance)
+        // ----------------------------------------------------------------
+        this.on('calculateOrderCosts', async (req) => {
+            const { orderId } = req.data;
+            const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+            if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+            await this._resolveOrderCodes(order);
+
+            // Fetch material standard prices & work center rates
+            const components = order.components || [];
+            const operations = order.operations || [];
+            const movements  = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: order.ID });
+
+            let plannedMaterialCost = 0;
+            let actualMaterialCost = 0;
+            let plannedLaborCost = 0;
+            let actualLaborCost = 0;
+            let plannedMachineCost = 0;
+            let actualMachineCost = 0;
+            let goodsReceiptCredit = 0;
+
+            // Delete existing itemization lines for fresh recalculation
+            await DELETE.from('sap.production.portal.OrderCostItemizations').where({ order_ID: order.ID });
+            const itemizations = [];
+            let itemSeq = 10;
+
+            // 1. Material Components Calculation (Line Category 'M')
+            for (const comp of components) {
+                const mat = comp.componentMaterial_ID 
+                    ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: comp.componentMaterial_ID })
+                    : null;
+                
+                const stdPrice = parseFloat(mat?.standardPrice || 15.00); // Default standard price if 0
+                const plannedQty = parseFloat(comp.requiredQty) || 0;
+                const actualQty = parseFloat(comp.issuedQty) || 0;
+
+                const compPlannedCost = plannedQty * stdPrice;
+                const compActualCost = actualQty * stdPrice;
+
+                plannedMaterialCost += compPlannedCost;
+                actualMaterialCost += compActualCost;
+
+                itemizations.push({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    itemNumber: itemSeq,
+                    itemCategory: 'M',
+                    resourceCode: mat?.code || 'MATERIAL',
+                    description: mat?.description || 'Raw Material Component',
+                    costElement: '400000', // Material Consumption G/L
+                    plannedQty: plannedQty,
+                    actualQty: actualQty,
+                    unit: comp.unit || 'PC',
+                    pricePerUnit: stdPrice,
+                    plannedCost: compPlannedCost,
+                    actualCost: compActualCost,
+                    variance: compActualCost - compPlannedCost
+                });
+                itemSeq += 10;
+            }
+
+            // 2. Routing Operations / Internal Activity Calculation (Line Category 'E')
+            for (const op of operations) {
+                const wc = op.workCenter_ID 
+                    ? await SELECT.one.from('sap.production.portal.WorkCenters').where({ ID: op.workCenter_ID })
+                    : null;
+
+                const laborRate = parseFloat(wc?.laborRatePerHour || 45.00);
+                const machineRate = parseFloat(wc?.machineRatePerHour || 65.00);
+
+                const plannedTimeHrs = (parseFloat(op.standardTime) || 0) / 60; // Convert MIN to HR
+                const actualTimeHrs = (parseFloat(op.confirmedTime) || 0) / 60;
+
+                const opPlannedLabor = plannedTimeHrs * laborRate;
+                const opActualLabor = actualTimeHrs * laborRate;
+                const opPlannedMachine = plannedTimeHrs * machineRate;
+                const opActualMachine = actualTimeHrs * machineRate;
+
+                plannedLaborCost += opPlannedLabor;
+                actualLaborCost += opActualLabor;
+                plannedMachineCost += opPlannedMachine;
+                actualMachineCost += opActualMachine;
+
+                // Labor itemization
+                itemizations.push({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    itemNumber: itemSeq,
+                    itemCategory: 'E',
+                    resourceCode: wc?.code ? `${wc.code}-LABOR` : 'LABOR',
+                    description: `Labor Activity - ${op.description || 'Operation'}`,
+                    costElement: '610000', // Direct Labor Cost Element
+                    plannedQty: plannedTimeHrs,
+                    actualQty: actualTimeHrs,
+                    unit: 'HR',
+                    pricePerUnit: laborRate,
+                    plannedCost: opPlannedLabor,
+                    actualCost: opActualLabor,
+                    variance: opActualLabor - opPlannedLabor
+                });
+                itemSeq += 10;
+
+                // Machine itemization
+                itemizations.push({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    itemNumber: itemSeq,
+                    itemCategory: 'E',
+                    resourceCode: wc?.code ? `${wc.code}-MACH` : 'MACHINE',
+                    description: `Machine Activity - ${op.description || 'Operation'}`,
+                    costElement: '620000', // Machine Cost Element
+                    plannedQty: plannedTimeHrs,
+                    actualQty: actualTimeHrs,
+                    unit: 'HR',
+                    pricePerUnit: machineRate,
+                    plannedCost: opPlannedMachine,
+                    actualCost: opActualMachine,
+                    variance: opActualMachine - opPlannedMachine
+                });
+                itemSeq += 10;
+            }
+
+            // 3. Overhead Rate Calculation (Line Category 'G' - 10% on direct costs)
+            const plannedOverheadCost = (plannedMaterialCost + plannedLaborCost + plannedMachineCost) * 0.10;
+            const actualOverheadCost = (actualMaterialCost + actualLaborCost + actualMachineCost) * 0.10;
+
+            itemizations.push({
+                ID: cds.utils.uuid(),
+                order_ID: order.ID,
+                itemNumber: itemSeq,
+                itemCategory: 'G',
+                resourceCode: 'OVERHEAD-10%',
+                description: 'Factory Manufacturing Overhead (10%)',
+                costElement: '650000', // Factory Overhead G/L
+                plannedQty: 1,
+                actualQty: 1,
+                unit: 'AU',
+                pricePerUnit: plannedOverheadCost,
+                plannedCost: plannedOverheadCost,
+                actualCost: actualOverheadCost,
+                variance: actualOverheadCost - plannedOverheadCost
+            });
+            itemSeq += 10;
+
+            // 4. Goods Receipt Credit Calculation (Line Category 'S')
+            const headerMat = order.material_ID 
+                ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: order.material_ID })
+                : null;
+            const headerStdPrice = parseFloat(headerMat?.standardPrice || 250.00);
+            const deliveredQty = parseFloat(order.deliveredQty) || 0;
+
+            goodsReceiptCredit = deliveredQty * headerStdPrice;
+
+            if (deliveredQty > 0) {
+                itemizations.push({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    itemNumber: itemSeq,
+                    itemCategory: 'S',
+                    resourceCode: headerMat?.code || 'HEADER-MAT',
+                    description: `Goods Receipt Credit - ${headerMat?.description || 'Finished Product'}`,
+                    costElement: '700000', // Production Order Credit G/L
+                    plannedQty: parseFloat(order.targetQty) || 0,
+                    actualQty: deliveredQty,
+                    unit: 'PC',
+                    pricePerUnit: headerStdPrice,
+                    plannedCost: - (parseFloat(order.targetQty) * headerStdPrice),
+                    actualCost: - goodsReceiptCredit,
+                    variance: (- goodsReceiptCredit) - (- (parseFloat(order.targetQty) * headerStdPrice))
+                });
+            }
+
+            const totalPlannedCost = plannedMaterialCost + plannedLaborCost + plannedMachineCost + plannedOverheadCost;
+            const totalActualCost = actualMaterialCost + actualLaborCost + actualMachineCost + actualOverheadCost;
+
+            // Target Cost = Yield Delivered * Standard Cost per Unit
+            const stdUnitCost = totalPlannedCost / (parseFloat(order.targetQty) || 1);
+            const targetCost = (parseFloat(order.confirmedQty) || 0) * stdUnitCost;
+            const totalVariance = totalActualCost - targetCost;
+            const orderBalance = totalActualCost - goodsReceiptCredit;
+
+            // Save to OrderCosts table
+            const existingCosts = await SELECT.one.from('sap.production.portal.OrderCosts').where({ order_ID: order.ID });
+            const costData = {
+                plannedMaterialCost,
+                plannedLaborCost,
+                plannedMachineCost,
+                plannedOverheadCost,
+                totalPlannedCost,
+                actualMaterialCost,
+                actualLaborCost,
+                actualMachineCost,
+                actualOverheadCost,
+                totalActualCost,
+                targetCost,
+                goodsReceiptCredit,
+                totalVariance,
+                orderBalance,
+                currency: 'USD'
+            };
+
+            if (existingCosts) {
+                await UPDATE('sap.production.portal.OrderCosts').set(costData).where({ ID: existingCosts.ID });
+            } else {
+                await INSERT.into('sap.production.portal.OrderCosts').entries({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    ...costData
+                });
+            }
+
+            // Insert Itemizations
+            for (const item of itemizations) {
+                await INSERT.into('sap.production.portal.OrderCostItemizations').entries(item);
+            }
+
+            return { success: true };
+        });
+
+        // ----------------------------------------------------------------
         // ACTION: Release Production Order (POST to SAP)
         // ----------------------------------------------------------------
         this.on('releaseOrder', async (req) => {

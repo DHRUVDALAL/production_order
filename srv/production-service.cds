@@ -31,8 +31,11 @@ service ProductionService {
     entity GoodsMovements as projection on portal.GoodsMovements;
     entity QualityInspectionLots as projection on portal.QualityInspectionLots;
     entity ProductionNotifications as projection on portal.ProductionNotifications;
+    entity OrderCosts as projection on portal.OrderCosts;
+    entity OrderCostItemizations as projection on portal.OrderCostItemizations;
 
     // Custom Transactional Actions
+    action calculateOrderCosts(orderId: UUID) returns { success: Boolean; };
     action checkMaterialAvailability(orderId: UUID) returns { success: Boolean; shortageCount: Integer; };
     action releaseOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action startOrder(orderId: UUID) returns { success: Boolean; status: String; };

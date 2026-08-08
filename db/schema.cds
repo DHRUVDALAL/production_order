@@ -126,6 +126,45 @@ entity ProductionOrders : cuid, managed {
     operations      : Composition of many OrderOperations on operations.order = $self;
     components      : Composition of many OrderComponents on components.order = $self;
     goodsMovements  : Association to many GoodsMovements on goodsMovements.order = $self;
+    costs           : Composition of one OrderCosts on costs.order = $self;
+    costItems       : Composition of many OrderCostItemizations on costItems.order = $self;
+}
+
+entity OrderCosts : cuid, managed {
+    order               : Association to ProductionOrders;
+    plannedMaterialCost : Decimal(15, 2) default 0;
+    plannedLaborCost    : Decimal(15, 2) default 0;
+    plannedMachineCost  : Decimal(15, 2) default 0;
+    plannedOverheadCost : Decimal(15, 2) default 0;
+    totalPlannedCost    : Decimal(15, 2) default 0;
+
+    actualMaterialCost  : Decimal(15, 2) default 0;
+    actualLaborCost     : Decimal(15, 2) default 0;
+    actualMachineCost   : Decimal(15, 2) default 0;
+    actualOverheadCost  : Decimal(15, 2) default 0;
+    totalActualCost     : Decimal(15, 2) default 0;
+
+    targetCost          : Decimal(15, 2) default 0;
+    goodsReceiptCredit  : Decimal(15, 2) default 0;
+    totalVariance       : Decimal(15, 2) default 0;
+    orderBalance        : Decimal(15, 2) default 0;
+    currency            : String(3) default 'USD';
+}
+
+entity OrderCostItemizations : cuid, managed {
+    order               : Association to ProductionOrders;
+    itemNumber          : Integer;
+    itemCategory        : String(2); // 'M' = Material, 'E' = Activity (Labor/Machine), 'G' = Overhead, 'S' = Credit (GR)
+    resourceCode        : String(40);
+    description         : String(255);
+    costElement         : String(10);
+    plannedQty          : Decimal(15, 3) default 0;
+    actualQty           : Decimal(15, 3) default 0;
+    unit                : String(3) default 'PC';
+    pricePerUnit        : Decimal(15, 2) default 0;
+    plannedCost         : Decimal(15, 2) default 0;
+    actualCost          : Decimal(15, 2) default 0;
+    variance            : Decimal(15, 2) default 0;
 }
 
 entity OrderOperations : cuid, managed {

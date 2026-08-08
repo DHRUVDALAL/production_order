@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2, DollarSign, PieChart, ListFilter, Scale } from 'lucide-react';
 
 export const ProductionOrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -12,6 +12,8 @@ export const ProductionOrderDetail: React.FC = () => {
   const [grQty, setGrQty] = useState('');
   const [grSlocId, setGrSlocId] = useState('');
   const [showGrForm, setShowGrForm] = useState(false);
+  const [showCostsModal, setShowCostsModal] = useState(false);
+  const [activeCostTab, setActiveCostTab] = useState<'analysis' | 'itemization' | 'split' | 'balance'>('analysis');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isEditingQty, setIsEditingQty] = useState(false);
@@ -41,7 +43,38 @@ export const ProductionOrderDetail: React.FC = () => {
     queryKey: ['orderDetail', id],
     queryFn: async () => {
       const res = await api.get(`/odata/v4/production/ProductionOrders(${id})?$expand=material,plant,storageLocation,operations($orderby=sequence asc;$expand=workCenter),components($expand=componentMaterial),goodsMovements($expand=material)`);
+      const orderData = res.data;
+
+      // Safely fetch costs and costItems in separate calls to avoid OData expand composition errors
+      try {
+        const [costsRes, costItemsRes] = await Promise.all([
+          api.get(`/odata/v4/production/OrderCosts?$filter=order_ID eq ${id}`),
+          api.get(`/odata/v4/production/OrderCostItemizations?$filter=order_ID eq ${id}&$orderby=itemNumber asc`)
+        ]);
+        orderData.costs = costsRes.data?.value?.[0] || null;
+        orderData.costItems = costItemsRes.data?.value || [];
+      } catch (costErr) {
+        console.warn('Could not fetch cost details:', costErr);
+        orderData.costs = null;
+        orderData.costItems = [];
+      }
+
+      return orderData;
+    }
+  });
+
+  // Cost calculation action mutation
+  const calculateCostsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/calculateOrderCosts', { orderId: id });
       return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Order costs recalculated successfully!');
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Cost calculation failed.');
     }
   });
 
@@ -321,7 +354,21 @@ export const ProductionOrderDetail: React.FC = () => {
 
         {/* Action Panel */}
         <div className="sap-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', justifyContent: 'center' }}>
-          <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#555', marginBottom: '0.25rem' }}>Operations Control</h4>
+          <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#555', marginBottom: '0.25rem' }}>Operations & Costs Control</h4>
+
+          {/* Cost Order Button (SAP Public HANA style) */}
+          <button 
+            className="sap-btn" 
+            style={{ width: '100%', backgroundColor: '#5c7cfa', color: '#ffffff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600 }}
+            onClick={() => {
+              calculateCostsMutation.mutate();
+              setShowCostsModal(true);
+            }}
+            disabled={calculateCostsMutation.isPending}
+          >
+            <DollarSign size={16} />
+            <span>{calculateCostsMutation.isPending ? 'Calculating Costs...' : 'Cost Order (Goto -> Costs)'}</span>
+          </button>
           
           {/* ATP Button */}
           {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
@@ -560,6 +607,355 @@ export const ProductionOrderDetail: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* SAP Costing Views Dialog Modal */}
+      {showCostsModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '8px',
+            width: '100%',
+            maxWidth: '1050px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              backgroundColor: '#1c2430',
+              color: '#ffffff',
+              padding: '1rem 1.5rem',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <DollarSign size={20} style={{ color: '#4dabf7' }} />
+                  <span>Production Order Costs: {order.orderNumber}</span>
+                </h3>
+                <span style={{ fontSize: '0.75rem', color: '#adb5bd' }}>SAP S/4HANA Public Cloud Cost Accounting (CO-PC)</span>
+              </div>
+              <button
+                onClick={() => setShowCostsModal(false)}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#ffffff', fontSize: '1.25rem', cursor: 'pointer', fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Sub-menu Tabs: Analysis, Itemization, Cost Component Split, Balance */}
+            <div style={{
+              display: 'flex',
+              backgroundColor: '#f1f3f5',
+              borderBottom: '1px solid #dee2e6',
+              padding: '0 1rem'
+            }}>
+              <button
+                onClick={() => setActiveCostTab('analysis')}
+                style={{
+                  padding: '0.75rem 1.25rem',
+                  border: 'none',
+                  background: 'none',
+                  borderBottom: activeCostTab === 'analysis' ? '3px solid #0a6ed1' : '3px solid transparent',
+                  color: activeCostTab === 'analysis' ? '#0a6ed1' : '#495057',
+                  fontWeight: activeCostTab === 'analysis' ? 700 : 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.85rem'
+                }}
+              >
+                <PieChart size={16} />
+                <span>Analysis</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCostTab('itemization')}
+                style={{
+                  padding: '0.75rem 1.25rem',
+                  border: 'none',
+                  background: 'none',
+                  borderBottom: activeCostTab === 'itemization' ? '3px solid #0a6ed1' : '3px solid transparent',
+                  color: activeCostTab === 'itemization' ? '#0a6ed1' : '#495057',
+                  fontWeight: activeCostTab === 'itemization' ? 700 : 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.85rem'
+                }}
+              >
+                <ListFilter size={16} />
+                <span>Itemization</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCostTab('split')}
+                style={{
+                  padding: '0.75rem 1.25rem',
+                  border: 'none',
+                  background: 'none',
+                  borderBottom: activeCostTab === 'split' ? '3px solid #0a6ed1' : '3px solid transparent',
+                  color: activeCostTab === 'split' ? '#0a6ed1' : '#495057',
+                  fontWeight: activeCostTab === 'split' ? 700 : 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.85rem'
+                }}
+              >
+                <PieChart size={16} />
+                <span>Cost Component Split</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCostTab('balance')}
+                style={{
+                  padding: '0.75rem 1.25rem',
+                  border: 'none',
+                  background: 'none',
+                  borderBottom: activeCostTab === 'balance' ? '3px solid #0a6ed1' : '3px solid transparent',
+                  color: activeCostTab === 'balance' ? '#0a6ed1' : '#495057',
+                  fontWeight: activeCostTab === 'balance' ? 700 : 500,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.85rem'
+                }}
+              >
+                <Scale size={16} />
+                <span>Balance</span>
+              </button>
+            </div>
+
+            {/* Tab Body Contents */}
+            <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1 }}>
+              {/* TAB 1: ANALYSIS */}
+              {activeCostTab === 'analysis' && (
+                <div>
+                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#333' }}>Order Cost Analysis (Planned vs Actual vs Target)</h4>
+                  <table className="sap-table">
+                    <thead>
+                      <tr>
+                        <th>Cost Category</th>
+                        <th style={{ textAlign: 'right' }}>Planned Cost ({order.costs?.currency || 'USD'})</th>
+                        <th style={{ textAlign: 'right' }}>Actual Cost ({order.costs?.currency || 'USD'})</th>
+                        <th style={{ textAlign: 'right' }}>Target Cost ({order.costs?.currency || 'USD'})</th>
+                        <th style={{ textAlign: 'right' }}>Variance ({order.costs?.currency || 'USD'})</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Direct Material Costs</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.plannedMaterialCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>${(parseFloat(order.costs?.actualMaterialCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right' }}>${((parseFloat(order.costs?.plannedMaterialCost) || 0) * (parseFloat(order.confirmedQty)/parseFloat(order.targetQty) || 0)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: ((parseFloat(order.costs?.actualMaterialCost) || 0) - (parseFloat(order.costs?.plannedMaterialCost) || 0)) > 0 ? '#bb0000' : '#2b7c2b' }}>
+                          ${((parseFloat(order.costs?.actualMaterialCost) || 0) - (parseFloat(order.costs?.plannedMaterialCost) || 0)).toFixed(2)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Direct Labor Activity</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.plannedLaborCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>${(parseFloat(order.costs?.actualLaborCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right' }}>${((parseFloat(order.costs?.plannedLaborCost) || 0) * (parseFloat(order.confirmedQty)/parseFloat(order.targetQty) || 0)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: ((parseFloat(order.costs?.actualLaborCost) || 0) - (parseFloat(order.costs?.plannedLaborCost) || 0)) > 0 ? '#bb0000' : '#2b7c2b' }}>
+                          ${((parseFloat(order.costs?.actualLaborCost) || 0) - (parseFloat(order.costs?.plannedLaborCost) || 0)).toFixed(2)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Machine Activity</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.plannedMachineCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>${(parseFloat(order.costs?.actualMachineCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right' }}>${((parseFloat(order.costs?.plannedMachineCost) || 0) * (parseFloat(order.confirmedQty)/parseFloat(order.targetQty) || 0)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: ((parseFloat(order.costs?.actualMachineCost) || 0) - (parseFloat(order.costs?.plannedMachineCost) || 0)) > 0 ? '#bb0000' : '#2b7c2b' }}>
+                          ${((parseFloat(order.costs?.actualMachineCost) || 0) - (parseFloat(order.costs?.plannedMachineCost) || 0)).toFixed(2)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Manufacturing Overhead (10%)</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.plannedOverheadCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>${(parseFloat(order.costs?.actualOverheadCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right' }}>${((parseFloat(order.costs?.plannedOverheadCost) || 0) * (parseFloat(order.confirmedQty)/parseFloat(order.targetQty) || 0)).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: ((parseFloat(order.costs?.actualOverheadCost) || 0) - (parseFloat(order.costs?.plannedOverheadCost) || 0)) > 0 ? '#bb0000' : '#2b7c2b' }}>
+                          ${((parseFloat(order.costs?.actualOverheadCost) || 0) - (parseFloat(order.costs?.plannedOverheadCost) || 0)).toFixed(2)}
+                        </td>
+                      </tr>
+                      <tr style={{ backgroundColor: '#f8f9fa', fontWeight: 700 }}>
+                        <td>TOTAL PRODUCTION COST (DEBITS)</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.totalPlannedCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: '#0a6ed1' }}>${(parseFloat(order.costs?.totalActualCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right' }}>${(parseFloat(order.costs?.targetCost) || 0).toFixed(2)}</td>
+                        <td style={{ textAlign: 'right', color: (parseFloat(order.costs?.totalVariance) || 0) > 0 ? '#bb0000' : '#2b7c2b' }}>
+                          ${(parseFloat(order.costs?.totalVariance) || 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* TAB 2: ITEMIZATION */}
+              {activeCostTab === 'itemization' && (
+                <div>
+                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#333' }}>Detailed Line-Item Breakdown (SAP Itemization)</h4>
+                  <table className="sap-table">
+                    <thead>
+                      <tr>
+                        <th>Item #</th>
+                        <th>Cat</th>
+                        <th>Resource / Code</th>
+                        <th>Description</th>
+                        <th>G/L Element</th>
+                        <th style={{ textAlign: 'right' }}>Plan Qty</th>
+                        <th style={{ textAlign: 'right' }}>Act Qty</th>
+                        <th style={{ textAlign: 'right' }}>Rate ($)</th>
+                        <th style={{ textAlign: 'right' }}>Plan Total ($)</th>
+                        <th style={{ textAlign: 'right' }}>Act Total ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {order.costItems?.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No itemization lines available. Click 'Cost Order' to calculate.</td>
+                        </tr>
+                      ) : (
+                        order.costItems?.map((item: any) => (
+                          <tr key={item.ID}>
+                            <td>{item.itemNumber}</td>
+                            <td>
+                              <span style={{
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                fontSize: '0.7rem',
+                                fontWeight: 700,
+                                backgroundColor: item.itemCategory === 'M' ? '#e7f5ff' : item.itemCategory === 'E' ? '#fff4e6' : item.itemCategory === 'G' ? '#f3d9fa' : '#ebfbee',
+                                color: item.itemCategory === 'M' ? '#1971c2' : item.itemCategory === 'E' ? '#d9480f' : item.itemCategory === 'G' ? '#9c36b5' : '#2b7c2b'
+                              }}>
+                                {item.itemCategory}
+                              </span>
+                            </td>
+                            <td style={{ fontWeight: 600 }}>{item.resourceCode}</td>
+                            <td>{item.description}</td>
+                            <td>{item.costElement}</td>
+                            <td style={{ textAlign: 'right' }}>{(parseFloat(item.plannedQty) || 0).toFixed(2)} {item.unit}</td>
+                            <td style={{ textAlign: 'right' }}>{(parseFloat(item.actualQty) || 0).toFixed(2)} {item.unit}</td>
+                            <td style={{ textAlign: 'right' }}>${(parseFloat(item.pricePerUnit) || 0).toFixed(2)}</td>
+                            <td style={{ textAlign: 'right' }}>${(parseFloat(item.plannedCost) || 0).toFixed(2)}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>${(parseFloat(item.actualCost) || 0).toFixed(2)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* TAB 3: COST COMPONENT SPLIT */}
+              {activeCostTab === 'split' && (
+                <div>
+                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#333' }}>Cost Component Split View</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                    <div style={{ border: '1px solid #dee2e6', borderRadius: '6px', padding: '1rem', backgroundColor: '#f8f9fa' }}>
+                      <h5 style={{ margin: '0 0 0.75rem 0', color: '#0a6ed1' }}>Raw Material Share</h5>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1c2430' }}>
+                        ${(parseFloat(order.costs?.actualMaterialCost) || 0).toFixed(2)}
+                      </div>
+                      <span style={{ fontSize: '0.8rem', color: '#666' }}>
+                        {(((parseFloat(order.costs?.actualMaterialCost) || 0) / (parseFloat(order.costs?.totalActualCost) || 1)) * 100).toFixed(1)}% of Total Actual Cost
+                      </span>
+                    </div>
+
+                    <div style={{ border: '1px solid #dee2e6', borderRadius: '6px', padding: '1rem', backgroundColor: '#f8f9fa' }}>
+                      <h5 style={{ margin: '0 0 0.75rem 0', color: '#d9480f' }}>Internal Labor & Machine Share</h5>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1c2430' }}>
+                        ${((parseFloat(order.costs?.actualLaborCost) || 0) + (parseFloat(order.costs?.actualMachineCost) || 0)).toFixed(2)}
+                      </div>
+                      <span style={{ fontSize: '0.8rem', color: '#666' }}>
+                        {((((parseFloat(order.costs?.actualLaborCost) || 0) + (parseFloat(order.costs?.actualMachineCost) || 0)) / (parseFloat(order.costs?.totalActualCost) || 1)) * 100).toFixed(1)}% of Total Actual Cost
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: BALANCE */}
+              {activeCostTab === 'balance' && (
+                <div>
+                  <h4 style={{ margin: '0 0 1rem 0', fontSize: '0.95rem', color: '#333' }}>Order Settlement Balance (Debits vs Credits)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div style={{ padding: '1rem', borderRadius: '6px', backgroundColor: '#e7f5ff', border: '1px solid #a5d8ff' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#1971c2', fontWeight: 600 }}>TOTAL DEBITS (Actual Costs)</span>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1864ab', marginTop: '0.25rem' }}>
+                        ${(parseFloat(order.costs?.totalActualCost) || 0).toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div style={{ padding: '1rem', borderRadius: '6px', backgroundColor: '#ebfbee', border: '1px solid #b2f2bb' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#2b7c2b', fontWeight: 600 }}>TOTAL CREDITS (GR Delivered)</span>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#2b7c2b', marginTop: '0.25rem' }}>
+                        -${(parseFloat(order.costs?.goodsReceiptCredit) || 0).toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div style={{ padding: '1rem', borderRadius: '6px', backgroundColor: (parseFloat(order.costs?.orderBalance) || 0) === 0 ? '#f8f9fa' : '#fff5f5', border: '1px solid #ffc9c9' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#c92a2a', fontWeight: 600 }}>NET ORDER BALANCE (WIP / Variance)</span>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#c92a2a', marginTop: '0.25rem' }}>
+                        ${(parseFloat(order.costs?.orderBalance) || 0).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#555', backgroundColor: '#f8f9fa', padding: '0.75rem', borderRadius: '4px', border: '1px dashed #ced4da' }}>
+                    <strong>SAP Settlement Status:</strong> { (parseFloat(order.costs?.orderBalance) || 0) === 0 ? 'Order is fully settled (Balance = 0.00).' : 'Work-in-Process (WIP) active. Pending final TECO order settlement.' }
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              backgroundColor: '#f8f9fa',
+              borderTop: '1px solid #dee2e6',
+              padding: '0.75rem 1.5rem',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '0.75rem'
+            }}>
+              <button
+                className="sap-btn sap-btn-secondary"
+                onClick={() => calculateCostsMutation.mutate()}
+                disabled={calculateCostsMutation.isPending}
+              >
+                {calculateCostsMutation.isPending ? 'Recalculating...' : 'Recalculate Costs'}
+              </button>
+              <button
+                className="sap-btn sap-btn-primary"
+                onClick={() => setShowCostsModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

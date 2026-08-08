@@ -494,6 +494,7 @@ export default class ProductionService extends cds.ApplicationService {
                         QuantityInEntryUnit: quantity,
                         EntryUnit          : (unit || 'PC').slice(0, 3),
                         ManufacturingOrder : orderNumber,
+                        ManufacturingOrderItem: orderNumber ? '0001' : undefined,
                         // 'F' = the movement references a production order.
                         // Without it S/4 rejects the item with "Update control
                         // of movement type is incorrect".

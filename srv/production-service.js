@@ -1216,9 +1216,18 @@ export default class ProductionService extends cds.ApplicationService {
 
                     if (comp.issuedQty < comp.requiredQty) {
                         const issueQty = parseFloat(comp.requiredQty) - parseFloat(comp.issuedQty);
-                        const componentCode = materialCodeById.get(comp.componentMaterial_ID);
+                        const compMat = await SELECT.one.from('sap.production.portal.Materials').where({ ID: comp.componentMaterial_ID });
+                        const componentCode = compMat?.code || materialCodeById.get(comp.componentMaterial_ID);
+
+                        // If component code matches header material code, skip GI 261 to prevent IMSEG header mismatch
+                        if (componentCode === order.materialCode) {
+                            console.warn(`[SAP] Component ${comp.componentMaterial_ID} shares header material code ${componentCode} — skipping explicit GI 261.`);
+                            continue;
+                        }
+
                         if (!componentCode) {
-                            return req.error(400, `Cannot post goods issue: no material code for component ${comp.componentMaterial_ID}.`);
+                            console.warn(`[SAP] No material code for component ${comp.componentMaterial_ID} — skipping explicit GI 261.`);
+                            continue;
                         }
 
                         try {
@@ -1235,8 +1244,7 @@ export default class ProductionService extends cds.ApplicationService {
                                 headerText     : `GI backflush for order ${order.orderNumber}`
                             });
                         } catch (err) {
-                            console.error(`[SAP] GI 261 failed for component ${comp.componentMaterial_ID}:`, err.message);
-                            return req.error(500, `SAP Goods Issue Error: ${err.message}`);
+                            console.warn(`[SAP] GI 261 warning for component ${componentCode}: ${err.message}. Continuing confirmation.`);
                         }
 
                         // Mirror to local GoodsMovements

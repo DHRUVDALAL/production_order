@@ -414,7 +414,13 @@ export const ProductionOrderDetail: React.FC = () => {
             <button 
               className="sap-btn sap-btn-primary" 
               style={{ width: '100%', backgroundColor: '#2b7c2b' }}
-              onClick={() => { setShowGrForm(true); setGrSlocId(order.storageLocation_ID); }}
+              onClick={() => { 
+                setShowGrForm(true); 
+                setGrSlocId(order.storageLocation_ID);
+                // Calculate remaining yield open for GR: confirmed yield or target qty minus delivered
+                const remainingYield = Math.max(0, (parseFloat(order.confirmedQty) || parseFloat(order.targetQty) || 0) - (parseFloat(order.deliveredQty) || 0));
+                setGrQty(remainingYield > 0 ? remainingYield.toString() : (parseFloat(order.targetQty) || 1).toString());
+              }}
             >
               <Truck size={16} />
               <span>Post Goods Receipt (101)</span>

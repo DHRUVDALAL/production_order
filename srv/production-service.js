@@ -552,6 +552,26 @@ export default class ProductionService extends cds.ApplicationService {
             const existingOrder = await orderRepo.selectById(orderUpdates.ID);
             if (!existingOrder) return;
 
+            // Recalculate BOM Component required quantities if targetQty is updated
+            if (orderUpdates.targetQty !== undefined && orderUpdates.targetQty !== null && existingOrder.targetQty > 0) {
+                const newTargetQty = parseFloat(orderUpdates.targetQty);
+                const oldTargetQty = parseFloat(existingOrder.targetQty);
+
+                if (!isNaN(newTargetQty) && newTargetQty > 0 && newTargetQty !== oldTargetQty) {
+                    const ratio = newTargetQty / oldTargetQty;
+                    const components = await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: existingOrder.ID });
+
+                    for (const comp of components) {
+                        const currentReq = parseFloat(comp.requiredQty) || 0;
+                        const newReq = Math.round(currentReq * ratio * 1000) / 1000;
+                        await UPDATE('sap.production.portal.OrderComponents')
+                            .set({ requiredQty: newReq })
+                            .where({ ID: comp.ID });
+                    }
+                    console.log(`[Order Update] Recalculated ${components.length} BOM component requirements for Order ${existingOrder.orderNumber} (ratio: ${ratio})`);
+                }
+            }
+
             // Transition from DRAFT to CRTD
             if (existingOrder.status === 'DRAFT' && orderUpdates.status === 'CRTD') {
                 const fullOrder = { ...existingOrder, ...orderUpdates };

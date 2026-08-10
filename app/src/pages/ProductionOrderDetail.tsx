@@ -450,7 +450,9 @@ export const ProductionOrderDetail: React.FC = () => {
                 className="sap-input" 
                 value={grQty} 
                 onChange={e => setGrQty(e.target.value)} 
-                max={parseFloat(order.targetQty) - parseFloat(order.deliveredQty)} 
+                min="0.001"
+                step="any"
+                max={Math.max(1, (parseFloat(order.targetQty) * 1.10) - (parseFloat(order.deliveredQty) || 0))} 
                 required 
               />
             </div>

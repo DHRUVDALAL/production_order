@@ -33,7 +33,10 @@ service ProductionService {
     entity ProductionNotifications as projection on portal.ProductionNotifications;
     entity OrderCosts as projection on portal.OrderCosts;
     entity OrderCostItemizations as projection on portal.OrderCostItemizations;
-
+    entity OrderStatusChanges as projection on portal.OrderStatusChanges;
+    entity BatchNumbers as projection on portal.BatchNumbers;
+    entity OutputItems as projection on portal.OutputItems;
+    entity SchedulingMargins as projection on portal.SchedulingMargins;
     // Custom Transactional Actions
     action calculateOrderCosts(orderId: UUID) returns { success: Boolean; };
     action checkMaterialAvailability(orderId: UUID) returns { success: Boolean; shortageCount: Integer; };
@@ -67,4 +70,118 @@ service ProductionService {
         // into an open MM period.
         postingDate: Date
     ) returns { success: Boolean; docNum: String; };
+
+    // Schedule Order
+    action scheduleOrder(
+        orderId        : UUID,
+        schedulingType : String  // 'FORWARD' | 'BACKWARD' | 'CURRENT_DATE'
+    ) returns {
+        success          : Boolean;
+        scheduledStart   : String;
+        scheduledEnd     : String;
+        scheduledRelease : String;
+    };
+
+    // Change Net Quantity
+    action changeNetQuantity(
+        orderId    : UUID,
+        newQuantity: Decimal(15,3),
+        reason     : String
+    ) returns { success: Boolean; message: String; };
+
+    // Change Dates and Times
+    action changeDatesAndTimes(
+        orderId           : UUID,
+        newBasicStartDate : Date,
+        newBasicEndDate   : Date,
+        newStartTime      : String,
+        newEndTime        : String
+    ) returns { success: Boolean; };
+
+    // Read PP Master Data
+    action readPPMasterData(orderId: UUID) returns {
+        success           : Boolean;
+        operationsUpdated : Integer;
+        componentsUpdated : Integer;
+    };
+
+    // Get Status Changes history
+    action getStatusChanges(orderId: UUID) returns array of {
+        oldStatus : String;
+        newStatus : String;
+        changedBy : String;
+        changedAt : String;
+        remark    : String;
+    };
+
+    // Get Change Management / Audit Trail
+    action getChangeManagement(orderId: UUID) returns array of {
+        fieldName : String;
+        oldValue  : String;
+        newValue  : String;
+        changedBy : String;
+        changedAt : String;
+        action    : String;
+    };
+
+    // Get Missing Parts
+    action getMissingParts(orderId: UUID) returns array of {
+        componentId   : String;
+        material      : String;
+        description   : String;
+        requiredQty   : Decimal(15,3);
+        availableQty  : Decimal(15,3);
+        shortageQty   : Decimal(15,3);
+        unit          : String;
+        status        : String;
+    };
+
+    // Create Batch
+    action createBatch(
+        orderId  : UUID,
+        quantity : Decimal(15,3)
+    ) returns { success: Boolean; batchNumber: String; };
+
+    // Get Output Items
+    action getOutputItems(orderId: UUID) returns array of {
+        ID           : String;
+        outputType   : String;
+        description  : String;
+        transmission : String;
+        status       : String;
+        scheduledAt  : String;
+    };
+
+    // Reprint Output
+    action reprintOutput(
+        orderId    : UUID,
+        outputType : String
+    ) returns { success: Boolean; message: String; };
+
+    // Get Settlement Rule
+    action getSettlementRule(orderId: UUID) returns {
+        settlementType : String;
+        receiver       : String;
+        percentage     : Decimal(5,2);
+        currency       : String;
+    };
+
+    // Stock Requirements List
+    action getStockRequirementsList(
+        materialCode : String,
+        plantCode    : String
+    ) returns array of {
+        date      : String;
+        type      : String;
+        quantity  : Decimal(15,3);
+        cumQty    : Decimal(15,3);
+        reference : String;
+        status    : String;
+    };
+
+    // Technically Complete Order
+    action technicallyCompleteOrder(orderId: UUID) returns { success: Boolean; status: String; };
+
+    // Close Order
+    action closeOrder(orderId: UUID) returns { success: Boolean; status: String; };
 }

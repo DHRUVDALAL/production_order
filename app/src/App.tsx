@@ -13,6 +13,11 @@ import { QualityInspection } from './pages/QualityInspection';
 import { Inventory } from './pages/Inventory';
 import { Admin } from './pages/Admin';
 import { Unauthorized } from './pages/Unauthorized';
+import { MissingPartsPage } from './pages/MissingPartsPage';
+import { StatusChangesPage } from './pages/StatusChangesPage';
+import { ChangeManagementPage } from './pages/ChangeManagementPage';
+import { StockRequirementsPage } from './pages/StockRequirementsPage';
+import { OutputManagementPage } from './pages/OutputManagementPage';
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -51,6 +56,36 @@ function App() {
             <Route path="/orders/:id" element={
               <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
                 <AppLayout><ProductionOrderDetail /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/orders/:id/missing-parts" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
+                <AppLayout><MissingPartsPage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/orders/:id/status-changes" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
+                <AppLayout><StatusChangesPage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/orders/:id/change-management" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'PLANT_SUPV', 'PLANT_MGR']}>
+                <AppLayout><ChangeManagementPage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/orders/:id/outputs" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'PLANT_SUPV', 'PLANT_MGR']}>
+                <AppLayout><OutputManagementPage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/stock-requirements" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'PROD_OPERATOR']}>
+                <AppLayout><StockRequirementsPage /></AppLayout>
               </RouteGuard>
             } />
 

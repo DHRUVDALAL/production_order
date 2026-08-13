@@ -28,6 +28,20 @@ export const ProductionOrderDetail: React.FC = () => {
   const [isEditingQty, setIsEditingQty] = useState(false);
   const [editQtyValue, setEditQtyValue] = useState('');
 
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [schedulingType, setSchedulingType] = useState<'FORWARD'|'BACKWARD'|'CURRENT_DATE'>('CURRENT_DATE');
+  const [showChangeDatesModal, setShowChangeDatesModal] = useState(false);
+  const [showChangeQtyModal, setShowChangeQtyModal] = useState(false);
+  const [showStatusChangesModal, setShowStatusChangesModal] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [showReadMasterModal, setShowReadMasterModal] = useState(false);
+  const [newStartDate, setNewStartDate] = useState('');
+  const [newEndDate, setNewEndDate] = useState('');
+  const [newQty, setNewQty] = useState('');
+  const [changeQtyReason, setChangeQtyReason] = useState('');
+  const [activeHeaderTab, setActiveHeaderTab] = useState<'general'|'assignment'|'goodsReceipt'|'control'|'masterData'|'longText'|'administration'>('general');
+
   const updateQtyMutation = useMutation({
     mutationFn: async (newQty: number) => {
       setErrorMsg('');
@@ -173,6 +187,108 @@ export const ProductionOrderDetail: React.FC = () => {
     onError: (err: any) => {
       setErrorMsg(err.response?.data?.error?.message || 'Goods receipt failed.');
     }
+  });
+
+  const scheduleOrderMutation = useMutation({
+    mutationFn: async (type: string) => {
+      const res = await api.post('/odata/v4/production/scheduleOrder', { orderId: id, schedulingType: type });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(`Order scheduled successfully! Scheduled Start: ${data?.scheduledStart?.split('T')[0] || 'N/A'}, End: ${data?.scheduledEnd?.split('T')[0] || 'N/A'}`);
+      setShowScheduleModal(false);
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Scheduling failed.')
+  });
+
+  const changeDatesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/changeDatesAndTimes', {
+        orderId: id, newBasicStartDate: newStartDate, newBasicEndDate: newEndDate, newStartTime: '00:00', newEndTime: '24:00'
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Dates updated successfully.');
+      setShowChangeDatesModal(false);
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Date change failed.')
+  });
+
+  const changeQtyMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/changeNetQuantity', {
+        orderId: id, newQuantity: parseFloat(newQty), reason: changeQtyReason
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(data?.message || 'Quantity updated successfully.');
+      setShowChangeQtyModal(false);
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Quantity change failed.')
+  });
+
+  const readMasterDataMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/readPPMasterData', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(`PP Master Data read: ${data?.operationsUpdated || 0} operations, ${data?.componentsUpdated || 0} components updated.`);
+      setShowReadMasterModal(false);
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Read PP Master Data failed.')
+  });
+
+  const createBatchMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/createBatch', { orderId: id, quantity: parseFloat(order?.targetQty) });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(`Batch ${data?.batchNumber} created successfully!`);
+      setShowBatchModal(false);
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Create Batch failed.')
+  });
+
+  const tecoMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/technicallyCompleteOrder', { orderId: id });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Order set to Technically Complete (TECO).');
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'TECO failed.')
+  });
+
+  const closeOrderMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/closeOrder', { orderId: id });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Order closed (CLSD).');
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Close order failed.')
+  });
+
+  const { data: statusChanges } = useQuery({
+    queryKey: ['statusChanges', id],
+    queryFn: async () => {
+      const res = await api.post('/odata/v4/production/getStatusChanges', { orderId: id });
+      return res.data?.value || res.data || [];
+    },
+    enabled: showStatusChangesModal
   });
 
   if (isLoading || !order) {
@@ -362,11 +478,117 @@ export const ProductionOrderDetail: React.FC = () => {
                 <div style={{ fontWeight: 600, marginTop: '0.2rem' }}>{order.plant?.name} ({order.plant?.code})</div>
                 <div style={{ color: '#777', fontSize: '0.75rem' }}>SLoc: {order.storageLocation?.code}</div>
               </div>
-              <div>
+              
+              <div style={{ gridColumn: '1 / -1' }}>
                 <strong style={{ color: '#666' }}>Planned Scheduling Dates</strong>
-                <div style={{ fontWeight: 600, marginTop: '0.2rem' }}>{order.plannedStartDate} $\rightarrow$ {order.plannedEndDate}</div>
+                <table className="sap-table" style={{ marginTop: '0.5rem' }}>
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>Basic Dates</th>
+                      <th>Scheduled</th>
+                      <th>Confirmed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>End</strong></td>
+                      <td>{order.plannedEndDate} <Edit2 size={12} style={{cursor: 'pointer'}} onClick={() => { setNewStartDate(order.plannedStartDate); setNewEndDate(order.plannedEndDate); setShowChangeDatesModal(true); }} /></td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>{order.scheduledEndDate || '-'}</td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>{order.confirmedEndDate || '-'}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Start</strong></td>
+                      <td>{order.plannedStartDate} <Edit2 size={12} style={{cursor: 'pointer'}} onClick={() => { setNewStartDate(order.plannedStartDate); setNewEndDate(order.plannedEndDate); setShowChangeDatesModal(true); }} /></td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>{order.scheduledStartDate || '-'}</td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>{order.confirmedStartDate || '-'}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Release</strong></td>
+                      <td>-</td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>{order.scheduledReleaseDate || '-'}</td>
+                      <td style={{backgroundColor: '#f3f4f6'}}>-</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                  <span><strong>Scheduling Type:</strong> {order.schedulingType || 'Current date'}</span>
+                  <span><strong>Scheduling Margin Key:</strong> {order.schedulingMarginKey || '001'}</span>
+                </div>
               </div>
             </div>
+
+            {/* Header Sub Tabs */}
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--sap-border-color)' }}>
+              <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid #ccc', paddingBottom: '0.5rem', paddingTop: '0.5rem' }}>
+                {['general', 'assignment', 'goodsReceipt', 'control', 'masterData', 'longText', 'administration'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveHeaderTab(tab as any)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', fontWeight: activeHeaderTab === tab ? 'bold' : 'normal',
+                      borderBottom: activeHeaderTab === tab ? '2px solid #0a6ed1' : 'none', paddingBottom: '0.25rem', color: activeHeaderTab === tab ? '#0a6ed1' : '#333'
+                    }}
+                  >
+                    {tab.charAt(0).toUpperCase() + tab.slice(1).replace(/([A-Z])/g, ' $1')}
+                  </button>
+                ))}
+              </div>
+              <div style={{ padding: '1rem 0' }}>
+                {activeHeaderTab === 'general' && (
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div><strong>Total Qty:</strong> {order.targetQty}</div>
+                    <div><strong>Delivered:</strong> {order.deliveredQty}</div>
+                    <div><strong>Scrap Portion:</strong> {order.scrapQty || 0}</div>
+                    <div><strong>Short/Exc. Rcpt:</strong> {parseFloat(order.targetQty) - (parseFloat(order.deliveredQty) || 0)}</div>
+                  </div>
+                )}
+                {activeHeaderTab === 'assignment' && (
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div><strong>Order Type:</strong> {order.orderType || 'PP01'}</div>
+                    <div><strong>Scheduling Type:</strong> {order.schedulingType}</div>
+                    <div><strong>Plant:</strong> {order.plant?.code}</div>
+                    <div><strong>Storage Location:</strong> {order.storageLocation?.code}</div>
+                    <div><strong>MRP Controller:</strong> {order.mrpController || '001'}</div>
+                  </div>
+                )}
+                {activeHeaderTab === 'goodsReceipt' && (
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div><strong>Storage Location:</strong> {order.storageLocation?.name}</div>
+                    <div><strong>Movement Type:</strong> 101</div>
+                    <div><strong>GR Processing Time:</strong> {order.grProcessingTime || 0} days</div>
+                  </div>
+                )}
+                {activeHeaderTab === 'control' && (
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div><strong>Order Type:</strong> {order.orderType}</div>
+                    <div><strong>Plant Code:</strong> {order.plant?.code}</div>
+                    <div><strong>SAP Synced:</strong> {order.isSapSynced ? 'Yes' : 'No'}</div>
+                  </div>
+                )}
+                {activeHeaderTab === 'masterData' && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem' }}>
+                    <div><strong>Material Code:</strong> {order.material?.code}</div>
+                    <div><strong>Description:</strong> {order.material?.description}</div>
+                    <div><strong>Material Group:</strong> {order.material?.materialGroup}</div>
+                    <div><strong>Base Unit:</strong> {order.material?.baseUnit}</div>
+                  </div>
+                )}
+                {activeHeaderTab === 'longText' && (
+                  <div style={{ width: '100%' }}>
+                    <textarea className="sap-input" style={{ width: '100%', minHeight: '100px' }} readOnly defaultValue={order.longText || 'No long text available.'}></textarea>
+                  </div>
+                )}
+                {activeHeaderTab === 'administration' && (
+                  <div style={{ display: 'flex', gap: '2rem' }}>
+                    <div><strong>Created At:</strong> {order.createdAt ? new Date(order.createdAt).toLocaleString() : '-'}</div>
+                    <div><strong>Created By:</strong> {order.createdBy || 'System'}</div>
+                    <div><strong>Modified At:</strong> {order.modifiedAt ? new Date(order.modifiedAt).toLocaleString() : '-'}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -451,6 +673,47 @@ export const ProductionOrderDetail: React.FC = () => {
               No current control actions available in status <strong>{order.status}</strong>.
             </div>
           )}
+        </div>
+      </div>
+
+      {/* SAP Action Bar */}
+      <div className="sap-card" style={{ marginBottom: '2rem', padding: '0.5rem 1rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'center' }}>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Functions:</span>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { calculateCostsMutation.mutate(); setShowCostsModal(true); }}>Cost Order</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowReadMasterModal(true)}>Read PP Master Data</button>
+          </div>
+          
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Header:</span>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setNewStartDate(order.plannedStartDate); setNewEndDate(order.plannedEndDate); setShowChangeDatesModal(true); }}>Change Dates/Times</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setNewQty(order.targetQty); setShowChangeQtyModal(true); }}>Change Net Quantity</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowBatchModal(true)}>Create Batch</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => tecoMutation.mutate()}>Technical Complete (TECO)</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => closeOrderMutation.mutate()}>Close Order</button>
+          </div>
+          
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Goto:</span>
+            <Link to={`/orders/${id}/missing-parts`} className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', textDecoration: 'none' }}>Missing Parts</Link>
+            <Link to={`/orders/${id}/change-management`} className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', textDecoration: 'none' }}>Change Management</Link>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowStatusChangesModal(true)}>Status Changes</button>
+          </div>
+
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
+          
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Output:</span>
+            <Link to={`/orders/${id}/outputs`} className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', textDecoration: 'none' }}>Manage Output Items</Link>
+          </div>
         </div>
       </div>
 
@@ -982,6 +1245,127 @@ export const ProductionOrderDetail: React.FC = () => {
           </div>
         </div>
       )}
+
+      {showScheduleModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
+            <h3 style={{ marginTop: 0 }}>Schedule Order</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', margin: '1rem 0' }}>
+              <label><input type="radio" name="scheduling" checked={schedulingType === 'FORWARD'} onChange={() => setSchedulingType('FORWARD')} /> Forward Scheduling</label>
+              <label><input type="radio" name="scheduling" checked={schedulingType === 'BACKWARD'} onChange={() => setSchedulingType('BACKWARD')} /> Backward Scheduling</label>
+              <label><input type="radio" name="scheduling" checked={schedulingType === 'CURRENT_DATE'} onChange={() => setSchedulingType('CURRENT_DATE')} /> Current Date Scheduling</label>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowScheduleModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" onClick={() => scheduleOrderMutation.mutate(schedulingType)} disabled={scheduleOrderMutation.isPending}>Execute Scheduling</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChangeDatesModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
+            <h3 style={{ marginTop: 0 }}>Change in Dates/Times</h3>
+            <div className="sap-form-group">
+              <label className="sap-label">Start Date</label>
+              <input type="date" className="sap-input" value={newStartDate} onChange={e => setNewStartDate(e.target.value)} />
+            </div>
+            <div className="sap-form-group">
+              <label className="sap-label">End Date</label>
+              <input type="date" className="sap-input" value={newEndDate} onChange={e => setNewEndDate(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowChangeDatesModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" onClick={() => { if(newEndDate >= newStartDate) changeDatesMutation.mutate(); else alert("End date must be >= start date"); }} disabled={changeDatesMutation.isPending}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChangeQtyModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
+            <h3 style={{ marginTop: 0 }}>Change Net Quantity</h3>
+            <div className="sap-form-group">
+              <label className="sap-label">Current Qty</label>
+              <input type="text" className="sap-input" readOnly value={order.targetQty} />
+            </div>
+            <div className="sap-form-group">
+              <label className="sap-label">New Quantity</label>
+              <input type="number" className="sap-input" value={newQty} onChange={e => setNewQty(e.target.value)} />
+            </div>
+            <div className="sap-form-group">
+              <label className="sap-label">Reason</label>
+              <input type="text" className="sap-input" value={changeQtyReason} onChange={e => setChangeQtyReason(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowChangeQtyModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" onClick={() => { if(parseFloat(newQty) >= parseFloat(order.confirmedQty)) changeQtyMutation.mutate(); else alert("Quantity cannot be less than confirmed quantity."); }} disabled={changeQtyMutation.isPending}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showStatusChangesModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '800px', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0 }}>Status History: Order {order.orderNumber}</h3>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowStatusChangesModal(false)}>Close</button>
+            </div>
+            <table className="sap-table">
+              <thead>
+                <tr>
+                  <th>From Status</th>
+                  <th>To Status</th>
+                  <th>Changed By</th>
+                  <th>Changed At</th>
+                  <th>Remark</th>
+                </tr>
+              </thead>
+              <tbody>
+                {statusChanges?.map((c: any) => (
+                  <tr key={c.id}>
+                    <td><span className={`sap-badge sap-badge-${c.fromStatus}`}>{c.fromStatus}</span></td>
+                    <td><span className={`sap-badge sap-badge-${c.toStatus}`}>{c.toStatus}</span></td>
+                    <td>{c.changedBy}</td>
+                    <td>{new Date(c.changedAt).toLocaleString()}</td>
+                    <td>{c.remark || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {showReadMasterModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
+            <h3 style={{ marginTop: 0 }}>Read PP Master Data</h3>
+            <p>This will re-read BOM and Routing from master data and update operations and components.</p>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowReadMasterModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" onClick={() => readMasterDataMutation.mutate()} disabled={readMasterDataMutation.isPending}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
+            <h3 style={{ marginTop: 0 }}>Create Batch</h3>
+            <p>Are you sure you want to create a batch for this order?</p>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowBatchModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" onClick={() => createBatchMutation.mutate()} disabled={createBatchMutation.isPending}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

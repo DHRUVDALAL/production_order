@@ -1031,6 +1031,8 @@ export default class ProductionService extends cds.ApplicationService {
                 .set({ status: 'REL' })
                 .where({ ID: order.ID });
 
+            await recordStatusChange(order.ID, order.status, 'REL', req.headers['x-user-id'], 'Order Released');
+
             await UPDATE('sap.production.portal.OrderOperations')
                 .set({ status: 'REL' })
                 .where({ order_ID: order.ID });
@@ -1067,6 +1069,8 @@ export default class ProductionService extends cds.ApplicationService {
             await UPDATE('sap.production.portal.ProductionOrders')
                 .set({ status: 'STRT', actualStartDate: startDate })
                 .where({ ID: order.ID });
+
+            await recordStatusChange(order.ID, 'REL', 'STRT', req.headers['x-user-id'], 'Execution Started');
 
             const firstOp = await SELECT.one.from('sap.production.portal.OrderOperations')
                 .where({ order_ID: order.ID })
@@ -1312,6 +1316,8 @@ export default class ProductionService extends cds.ApplicationService {
                 .set({ status: finalOrderStatus })
                 .where({ ID: order.ID });
 
+            await recordStatusChange(order.ID, order.status, finalOrderStatus, req.headers['x-user-id'], 'Operation Confirmed');
+
             await this._logAudit(req.headers['x-user-id'], 'CONFIRM_OP', 'OrderOperations', op.ID,
                 JSON.stringify(oldOpValues),
                 JSON.stringify({ status: targetOpStatus, yieldQty: newCumulativeYield, sapConfirmationCounter })
@@ -1483,6 +1489,8 @@ export default class ProductionService extends cds.ApplicationService {
                 })
                 .where({ ID: order.ID });
 
+            await recordStatusChange(order.ID, order.status, isFullDelivery ? 'TECO' : newStatus, req.headers['x-user-id'], 'Goods Receipt Posted');
+
             if (isFullDelivery) {
                 // Mirror the completion to SAP, not just locally.
                 await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
@@ -1513,6 +1521,665 @@ export default class ProductionService extends cds.ApplicationService {
 
             return { success: true, docNum };
         });
+
+// ----------------------------------------------------------------
+// HELPER: Record a status change in OrderStatusChanges
+// ----------------------------------------------------------------
+const recordStatusChange = async (orderId, oldStatus, newStatus, userId, remark = '') => {
+    try {
+        const user = userId ? await SELECT.one.from('sap.production.portal.Users').where({ ID: userId }) : null;
+        const changedBy = user?.username || user?.name || userId || 'system';
+        await INSERT.into('sap.production.portal.OrderStatusChanges').entries({
+            ID: cds.utils.uuid(),
+            order_ID: orderId,
+            oldStatus,
+            newStatus,
+            changedBy,
+            changedAt: new Date().toISOString(),
+            remark
+        });
+    } catch (e) {
+        console.error('[Status Change Log Error]', e);
+    }
+};
+
+// ----------------------------------------------------------------
+// ACTION: Schedule Order
+// ----------------------------------------------------------------
+this.on('scheduleOrder', async (req) => {
+    const { orderId, schedulingType = 'CURRENT_DATE' } = req.data;
+
+    const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (['CNF', 'TECO', 'CLSD'].includes(order.status)) {
+        return req.error(400, `Scheduling not allowed in status ${order.status}.`);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let baseStart;
+    if (schedulingType === 'CURRENT_DATE') {
+        baseStart = today;
+    } else if (schedulingType === 'BACKWARD') {
+        const endDate = order.plannedEndDate ? new Date(order.plannedEndDate) : today;
+        endDate.setHours(24, 0, 0, 0);
+        baseStart = endDate;
+    } else {
+        // FORWARD: from plannedStartDate or today
+        baseStart = order.plannedStartDate ? new Date(order.plannedStartDate) : today;
+        baseStart.setHours(0, 0, 0, 0);
+    }
+
+    // Get scheduling margin (float before/after in days)
+    const marginKey = order.schedulingMarginKey || '001';
+    const margin = await SELECT.one.from('sap.production.portal.SchedulingMargins').where({ key_code: marginKey });
+    const floatBefore = parseFloat(margin?.floatBefore || 1);
+    const floatAfter = parseFloat(margin?.floatAfter || 1);
+
+    // Get operations sorted by sequence
+    const operations = (order.operations || []).sort((a, b) => a.sequence - b.sequence);
+
+    if (schedulingType === 'BACKWARD') {
+        // Backward: from end date, subtract operation durations in reverse
+        let currentTime = new Date(order.plannedEndDate || today);
+        currentTime.setHours(24, 0, 0, 0);
+
+        for (let i = operations.length - 1; i >= 0; i--) {
+            const op = operations[i];
+            const wc = op.workCenter_ID
+                ? await SELECT.one.from('sap.production.portal.WorkCenters').where({ ID: op.workCenter_ID })
+                : null;
+            const capacityPerDay = (parseFloat(wc?.capacityQty) || 8) * 60; // convert hrs to mins
+            const stdTimeMins = parseFloat(op.standardTime) || 60;
+            const daysNeeded = Math.ceil(stdTimeMins / capacityPerDay);
+
+            const opEnd = new Date(currentTime);
+            const opStart = new Date(currentTime);
+            opStart.setDate(opStart.getDate() - daysNeeded);
+
+            await UPDATE('sap.production.portal.OrderOperations')
+                .set({ scheduledStartDate: opStart.toISOString(), scheduledEndDate: opEnd.toISOString() })
+                .where({ ID: op.ID })
+                .catch(() => {});
+
+            currentTime = opStart;
+        }
+
+        const scheduledStart = currentTime;
+        const scheduledEnd = new Date(order.plannedEndDate || today);
+        const scheduledRelease = new Date(scheduledStart);
+        scheduledRelease.setDate(scheduledRelease.getDate() - floatBefore);
+
+        await UPDATE('sap.production.portal.ProductionOrders').set({
+            scheduledStartDate: scheduledStart.toISOString(),
+            scheduledEndDate: scheduledEnd.toISOString(),
+            scheduledReleaseDate: scheduledRelease.toISOString().split('T')[0]
+        }).where({ ID: order.ID });
+
+        await this._logAudit(req.headers['x-user-id'], 'SCHEDULE_ORDER', 'ProductionOrders', order.ID,
+            JSON.stringify({ schedulingType: 'none' }),
+            JSON.stringify({ schedulingType, scheduledStart: scheduledStart.toISOString(), scheduledEnd: scheduledEnd.toISOString() })
+        );
+
+        return {
+            success: true,
+            scheduledStart: scheduledStart.toISOString(),
+            scheduledEnd: scheduledEnd.toISOString(),
+            scheduledRelease: scheduledRelease.toISOString().split('T')[0]
+        };
+    } else {
+        // FORWARD / CURRENT_DATE: from start date, add operation durations
+        let currentTime = new Date(baseStart);
+        currentTime.setHours(9, 0, 0, 0); // start at 09:00
+
+        for (const op of operations) {
+            const wc = op.workCenter_ID
+                ? await SELECT.one.from('sap.production.portal.WorkCenters').where({ ID: op.workCenter_ID })
+                : null;
+            const capacityPerDay = (parseFloat(wc?.capacityQty) || 8) * 60; // mins/day
+            const stdTimeMins = parseFloat(op.standardTime) || 60;
+            const daysNeeded = Math.ceil(stdTimeMins / capacityPerDay);
+
+            const opStart = new Date(currentTime);
+            const opEnd = new Date(currentTime);
+            opEnd.setDate(opEnd.getDate() + daysNeeded);
+            opEnd.setHours(opEnd.getHours() + Math.round((stdTimeMins % 60) / 60 * 10) / 10);
+
+            await UPDATE('sap.production.portal.OrderOperations')
+                .set({ scheduledStartDate: opStart.toISOString(), scheduledEndDate: opEnd.toISOString() })
+                .where({ ID: op.ID })
+                .catch(() => {});
+
+            currentTime = opEnd;
+        }
+
+        const scheduledStart = new Date(baseStart);
+        scheduledStart.setHours(9, 0, 0, 0);
+        const scheduledEnd = new Date(currentTime);
+        const scheduledRelease = new Date(scheduledStart);
+        scheduledRelease.setDate(scheduledRelease.getDate() - floatBefore);
+
+        await UPDATE('sap.production.portal.ProductionOrders').set({
+            scheduledStartDate: scheduledStart.toISOString(),
+            scheduledEndDate: scheduledEnd.toISOString(),
+            scheduledReleaseDate: scheduledRelease.toISOString().split('T')[0]
+        }).where({ ID: order.ID });
+
+        await this._logAudit(req.headers['x-user-id'], 'SCHEDULE_ORDER', 'ProductionOrders', order.ID,
+            JSON.stringify({ schedulingType: 'none' }),
+            JSON.stringify({ schedulingType, scheduledStart: scheduledStart.toISOString(), scheduledEnd: scheduledEnd.toISOString() })
+        );
+
+        return {
+            success: true,
+            scheduledStart: scheduledStart.toISOString(),
+            scheduledEnd: scheduledEnd.toISOString(),
+            scheduledRelease: scheduledRelease.toISOString().split('T')[0]
+        };
+    }
+});
+
+// ----------------------------------------------------------------
+// ACTION: Change Net Quantity
+// ----------------------------------------------------------------
+this.on('changeNetQuantity', async (req) => {
+    const { orderId, newQuantity, reason } = req.data;
+    const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (['CNF', 'TECO', 'CLSD'].includes(order.status)) {
+        return req.error(400, `Cannot change quantity in status ${order.status}. Must be in CRTD, MACA, or REL.`);
+    }
+
+    const newQty = parseFloat(newQuantity);
+    if (!newQty || newQty <= 0) {
+        return req.error(400, 'New quantity must be greater than zero.');
+    }
+
+    const confirmedQty = parseFloat(order.confirmedQty) || 0;
+    if (newQty < confirmedQty) {
+        return req.error(400, `Cannot reduce quantity below already confirmed quantity (${confirmedQty}).`);
+    }
+
+    const deliveredQty = parseFloat(order.deliveredQty) || 0;
+    if (newQty < deliveredQty) {
+        return req.error(400, `Cannot reduce quantity below already delivered quantity (${deliveredQty}).`);
+    }
+
+    const oldQty = parseFloat(order.targetQty);
+    const ratio = newQty / oldQty;
+
+    // Proportionally update all component required quantities
+    for (const comp of (order.components || [])) {
+        const newReq = Math.round(parseFloat(comp.requiredQty) * ratio * 1000) / 1000;
+        await UPDATE('sap.production.portal.OrderComponents')
+            .set({ requiredQty: newReq })
+            .where({ ID: comp.ID });
+    }
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({ targetQty: newQty })
+        .where({ ID: order.ID });
+
+    await this._logAudit(req.headers['x-user-id'], 'CHANGE_NET_QTY', 'ProductionOrders', order.ID,
+        JSON.stringify({ targetQty: oldQty }),
+        JSON.stringify({ targetQty: newQty, reason: reason || '' })
+    );
+
+    return { success: true, message: `Order quantity updated from ${oldQty} to ${newQty}.` };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Change Dates and Times
+// ----------------------------------------------------------------
+this.on('changeDatesAndTimes', async (req) => {
+    const { orderId, newBasicStartDate, newBasicEndDate, newStartTime, newEndTime } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (['CNF', 'TECO', 'CLSD'].includes(order.status)) {
+        return req.error(400, `Cannot change dates in status ${order.status}.`);
+    }
+
+    const start = new Date(newBasicStartDate);
+    const end = new Date(newBasicEndDate);
+    if (end < start) {
+        return req.error(400, 'Basic End Date must be on or after Basic Start Date.');
+    }
+
+    const oldDates = { plannedStartDate: order.plannedStartDate, plannedEndDate: order.plannedEndDate };
+
+    await UPDATE('sap.production.portal.ProductionOrders').set({
+        plannedStartDate: newBasicStartDate,
+        plannedEndDate: newBasicEndDate
+    }).where({ ID: order.ID });
+
+    await this._logAudit(req.headers['x-user-id'], 'CHANGE_DATES', 'ProductionOrders', order.ID,
+        JSON.stringify(oldDates),
+        JSON.stringify({ plannedStartDate: newBasicStartDate, plannedEndDate: newBasicEndDate })
+    );
+
+    return { success: true };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Read PP Master Data (re-sync BOM and Routing to order)
+// ----------------------------------------------------------------
+this.on('readPPMasterData', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (['PCNF', 'CNF', 'TECO', 'CLSD'].includes(order.status)) {
+        return req.error(400, `Read PP Master Data not allowed in status ${order.status}. Must be in CRTD or REL.`);
+    }
+
+    const bom = await this._getBOMAndComponents(order.material_ID, order.plant_ID);
+    const routing = await this._getRoutingAndOperations(order.material_ID, order.plant_ID);
+
+    if (!bom && !routing) {
+        return req.error(400, 'No BOM or Routing found for this material and plant combination.');
+    }
+
+    let operationsUpdated = 0;
+    let componentsUpdated = 0;
+
+    // Update operations from routing
+    if (routing?.operations) {
+        for (const routingOp of routing.operations) {
+            const existingOp = (order.operations || []).find(o => o.sequence === routingOp.sequence);
+            if (existingOp) {
+                await UPDATE('sap.production.portal.OrderOperations').set({
+                    description: routingOp.description,
+                    standardTime: routingOp.standardTime,
+                    timeUnit: routingOp.timeUnit,
+                    workCenter_ID: routingOp.workCenter_ID
+                }).where({ ID: existingOp.ID });
+                operationsUpdated++;
+            } else {
+                await INSERT.into('sap.production.portal.OrderOperations').entries({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    sequence: routingOp.sequence,
+                    workCenter_ID: routingOp.workCenter_ID,
+                    description: routingOp.description,
+                    standardTime: routingOp.standardTime,
+                    timeUnit: routingOp.timeUnit,
+                    confirmedTime: 0,
+                    yieldQty: 0,
+                    scrapQty: 0,
+                    status: order.status === 'REL' ? 'REL' : 'CRTD'
+                });
+                operationsUpdated++;
+            }
+        }
+    }
+
+    // Update components from BOM
+    if (bom?.components) {
+        for (const bomComp of bom.components) {
+            const existingComp = (order.components || []).find(c => c.componentMaterial_ID === bomComp.componentMaterial_ID);
+            const newRequiredQty = parseFloat(bomComp.requiredQty) * parseFloat(order.targetQty);
+            if (existingComp) {
+                await UPDATE('sap.production.portal.OrderComponents').set({
+                    requiredQty: newRequiredQty,
+                    unit: bomComp.unit
+                }).where({ ID: existingComp.ID });
+                componentsUpdated++;
+            } else {
+                await INSERT.into('sap.production.portal.OrderComponents').entries({
+                    ID: cds.utils.uuid(),
+                    order_ID: order.ID,
+                    componentMaterial_ID: bomComp.componentMaterial_ID,
+                    requiredQty: newRequiredQty,
+                    availableQty: 0,
+                    shortageQty: 0,
+                    issuedQty: 0,
+                    unit: bomComp.unit,
+                    isBackflushed: false,
+                    status: 'RESV'
+                });
+                componentsUpdated++;
+            }
+        }
+    }
+
+    await this._logAudit(req.headers['x-user-id'], 'READ_PP_MASTER_DATA', 'ProductionOrders', order.ID,
+        JSON.stringify({ operationsCount: (order.operations || []).length, componentsCount: (order.components || []).length }),
+        JSON.stringify({ operationsUpdated, componentsUpdated })
+    );
+
+    return { success: true, operationsUpdated, componentsUpdated };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Status Changes
+// ----------------------------------------------------------------
+this.on('getStatusChanges', async (req) => {
+    const { orderId } = req.data;
+    const changes = await SELECT.from('sap.production.portal.OrderStatusChanges')
+        .where({ order_ID: orderId })
+        .orderBy('changedAt desc');
+    return (changes || []).map(c => ({
+        oldStatus: c.oldStatus || '',
+        newStatus: c.newStatus || '',
+        changedBy: c.changedBy || '',
+        changedAt: c.changedAt || '',
+        remark: c.remark || ''
+    }));
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Change Management (Audit Log)
+// ----------------------------------------------------------------
+this.on('getChangeManagement', async (req) => {
+    const { orderId } = req.data;
+    const logs = await SELECT.from('sap.production.portal.AuditLogs')
+        .where({ entityName: 'ProductionOrders', entityId: orderId })
+        .orderBy('createdAt desc');
+
+    const result = [];
+    for (const log of (logs || [])) {
+        try {
+            const old = log.oldValues ? JSON.parse(log.oldValues) : {};
+            const next = log.newValues ? JSON.parse(log.newValues) : {};
+            const allKeys = new Set([...Object.keys(old), ...Object.keys(next)]);
+            for (const key of allKeys) {
+                const oldVal = old[key] !== undefined ? String(old[key]) : '';
+                const newVal = next[key] !== undefined ? String(next[key]) : '';
+                if (oldVal !== newVal) {
+                    result.push({
+                        fieldName: key,
+                        oldValue: oldVal,
+                        newValue: newVal,
+                        changedBy: log.user_ID || 'system',
+                        changedAt: log.createdAt || '',
+                        action: log.action || ''
+                    });
+                }
+            }
+        } catch (e) {
+            result.push({
+                fieldName: 'action',
+                oldValue: '',
+                newValue: log.action || '',
+                changedBy: log.user_ID || 'system',
+                changedAt: log.createdAt || '',
+                action: log.action || ''
+            });
+        }
+    }
+    return result;
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Missing Parts
+// ----------------------------------------------------------------
+this.on('getMissingParts', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    const result = [];
+    for (const comp of (order.components || [])) {
+        const shortageQty = parseFloat(comp.shortageQty) || 0;
+        const requiredQty = parseFloat(comp.requiredQty) || 0;
+        const availableQty = parseFloat(comp.availableQty) || 0;
+
+        const mat = comp.componentMaterial_ID
+            ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: comp.componentMaterial_ID })
+            : null;
+
+        if (comp.status === 'MSPT' || shortageQty > 0 || availableQty < requiredQty) {
+            result.push({
+                componentId: comp.ID,
+                material: mat?.code || comp.componentMaterial_ID || '',
+                description: mat?.description || '',
+                requiredQty: requiredQty,
+                availableQty: availableQty,
+                shortageQty: Math.max(0, requiredQty - availableQty),
+                unit: comp.unit || 'PC',
+                status: comp.status || 'MSPT'
+            });
+        }
+    }
+    return result;
+});
+
+// ----------------------------------------------------------------
+// ACTION: Create Batch
+// ----------------------------------------------------------------
+this.on('createBatch', async (req) => {
+    const { orderId, quantity } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (!['REL', 'STRT', 'PCNF', 'CNF', 'INSP'].includes(order.status)) {
+        return req.error(400, `Create Batch is only allowed in REL, STRT, PCNF, CNF, or INSP status. Current: ${order.status}.`);
+    }
+
+    await this._resolveOrderCodes(order);
+
+    // Generate batch number: B + plant code + year + sequence
+    const year = new Date().getFullYear().toString().slice(-2);
+    const existingBatches = await SELECT.from('sap.production.portal.BatchNumbers')
+        .where({ order_ID: order.ID });
+    const seq = String(existingBatches.length + 1).padStart(3, '0');
+    const batchNumber = `B${order.plantCode || '1102'}${year}${seq}`;
+
+    await INSERT.into('sap.production.portal.BatchNumbers').entries({
+        ID: cds.utils.uuid(),
+        batchNumber,
+        material_ID: order.material_ID,
+        plant_ID: order.plant_ID,
+        order_ID: order.ID,
+        quantity: parseFloat(quantity) || parseFloat(order.targetQty),
+        unit: 'PC',
+        createdOn: new Date().toISOString().split('T')[0]
+    });
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({ batchNumber })
+        .where({ ID: order.ID });
+
+    await this._logAudit(req.headers['x-user-id'], 'CREATE_BATCH', 'ProductionOrders', order.ID,
+        JSON.stringify({ batchNumber: null }),
+        JSON.stringify({ batchNumber })
+    );
+
+    return { success: true, batchNumber };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Output Items
+// ----------------------------------------------------------------
+this.on('getOutputItems', async (req) => {
+    const { orderId } = req.data;
+    const items = await SELECT.from('sap.production.portal.OutputItems')
+        .where({ order_ID: orderId })
+        .orderBy('scheduledAt desc');
+    if (!items || items.length === 0) {
+        // Return default output types if none exist
+        return [
+            { ID: cds.utils.uuid(), outputType: 'PP_PRT', description: 'Production Order Print', transmission: 'PRINT', status: 'NEW', scheduledAt: new Date().toISOString() },
+            { ID: cds.utils.uuid(), outputType: 'PP_SHOP', description: 'Shop Floor Paper', transmission: 'PRINT', status: 'NEW', scheduledAt: new Date().toISOString() }
+        ];
+    }
+    return items.map(i => ({
+        ID: i.ID,
+        outputType: i.outputType,
+        description: i.description,
+        transmission: i.transmission,
+        status: i.status,
+        scheduledAt: i.scheduledAt || ''
+    }));
+});
+
+// ----------------------------------------------------------------
+// ACTION: Reprint Output
+// ----------------------------------------------------------------
+this.on('reprintOutput', async (req) => {
+    const { orderId, outputType } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    // Mark a new print request
+    await INSERT.into('sap.production.portal.OutputItems').entries({
+        ID: cds.utils.uuid(),
+        order_ID: orderId,
+        outputType: outputType || 'PP_PRT',
+        description: outputType === 'PP_SHOP' ? 'Shop Floor Paper (Reprint)' : 'Production Order Print (Reprint)',
+        transmission: 'PRINT',
+        status: 'SENT',
+        scheduledAt: new Date().toISOString(),
+        sentAt: new Date().toISOString()
+    });
+
+    return { success: true, message: `Output ${outputType} reprint scheduled for Order ${order.orderNumber}.` };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Settlement Rule
+// ----------------------------------------------------------------
+this.on('getSettlementRule', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    return {
+        settlementType: order.settlementRule || 'ORD',
+        receiver: order.orderNumber || '',
+        percentage: 100.00,
+        currency: 'INR'
+    };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Stock/Requirements List
+// ----------------------------------------------------------------
+this.on('getStockRequirementsList', async (req) => {
+    const { materialCode, plantCode } = req.data;
+
+    const mat = await SELECT.one.from('sap.production.portal.Materials').where({ code: materialCode });
+    const plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: plantCode });
+
+    if (!mat) return req.error(404, `Material ${materialCode} not found.`);
+
+    const result = [];
+    let cumulativeQty = 0;
+
+    // Fetch all production orders for this material
+    const orders = await SELECT.from('sap.production.portal.ProductionOrders')
+        .where({ material_ID: mat.ID })
+        .orderBy('plannedStartDate asc');
+
+    // Fetch all goods movements for this material
+    const movements = await SELECT.from('sap.production.portal.GoodsMovements')
+        .where({ material_ID: mat.ID })
+        .orderBy('postingDate asc');
+
+    // Starting stock from movements
+    let currentStock = 0;
+    for (const mv of movements) {
+        if (['101', '561'].includes(mv.movementType)) currentStock += parseFloat(mv.quantity);
+        else if (['261', '551', '262'].includes(mv.movementType)) currentStock -= parseFloat(mv.quantity);
+    }
+
+    // Add current stock line
+    result.push({
+        date: new Date().toISOString().split('T')[0],
+        type: 'Stock',
+        quantity: currentStock,
+        cumQty: currentStock,
+        reference: 'Current Stock',
+        status: 'AVLB'
+    });
+    cumulativeQty = currentStock;
+
+    // Add production order lines
+    for (const ord of orders) {
+        if (['CLSD', 'TECO'].includes(ord.status)) continue;
+        const qty = parseFloat(ord.targetQty) || 0;
+        cumulativeQty += qty;
+        result.push({
+            date: ord.plannedEndDate || new Date().toISOString().split('T')[0],
+            type: 'ProdOrder',
+            quantity: qty,
+            cumQty: cumulativeQty,
+            reference: ord.orderNumber || '',
+            status: ord.status || 'CRTD'
+        });
+    }
+
+    return result.sort((a, b) => new Date(a.date) - new Date(b.date));
+});
+
+// ----------------------------------------------------------------
+// ACTION: Technically Complete Order
+// ----------------------------------------------------------------
+this.on('technicallyCompleteOrder', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (['CRTD', 'TECO', 'CLSD'].includes(order.status)) {
+        return req.error(400, `Cannot technically complete order in status ${order.status}.`);
+    }
+
+    const oldStatus = order.status;
+
+    await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({ status: 'TECO' })
+        .where({ ID: order.ID });
+
+    await recordStatusChange(order.ID, oldStatus, 'TECO', req.headers['x-user-id'], 'Technical Completion');
+
+    await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+        type: 'INFO',
+        order_ID: order.ID,
+        message: `Production Order ${order.orderNumber} set to Technically Complete (TECO).`,
+        isRead: false
+    });
+
+    await this._logAudit(req.headers['x-user-id'], 'TECO_ORDER', 'ProductionOrders', order.ID,
+        JSON.stringify({ status: oldStatus }),
+        JSON.stringify({ status: 'TECO' })
+    );
+
+    return { success: true, status: 'TECO' };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Close Order
+// ----------------------------------------------------------------
+this.on('closeOrder', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (!['TECO', 'CNF', 'DLV'].includes(order.status)) {
+        return req.error(400, `Cannot close order in status ${order.status}. Must be in TECO, CNF, or DLV.`);
+    }
+
+    const oldStatus = order.status;
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({ status: 'CLSD' })
+        .where({ ID: order.ID });
+
+    await recordStatusChange(order.ID, oldStatus, 'CLSD', req.headers['x-user-id'], 'Order Closed');
+
+    await this._logAudit(req.headers['x-user-id'], 'CLOSE_ORDER', 'ProductionOrders', order.ID,
+        JSON.stringify({ status: oldStatus }),
+        JSON.stringify({ status: 'CLSD' })
+    );
+
+    return { success: true, status: 'CLSD' };
+});
 
         await super.init();
     }

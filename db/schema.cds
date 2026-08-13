@@ -116,6 +116,17 @@ entity ProductionOrders : cuid, managed {
     deliveredQty    : Decimal(15, 3) default 0;
     status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
     orderType       : String(4) default 'ZPPS';
+    scheduledStartDate   : DateTime;
+    scheduledEndDate     : DateTime;
+    scheduledReleaseDate : Date;
+    confirmedStartDate   : DateTime;
+    confirmedEndDate     : DateTime;
+    scrapPortion         : Decimal(5,2) default 0;
+    shortExcReceipt      : Decimal(15,3) default 0;
+    batchNumber          : String(10);
+    settlementRule       : String(20);
+    longText             : LargeString;
+    statusChanges        : Composition of many OrderStatusChanges on statusChanges.order = $self;
     schedulingType  : String(20) default 'forward';
     isCapacityChecked: Boolean default false;
     isInspectionRequired: Boolean default false;
@@ -174,6 +185,8 @@ entity OrderOperations : cuid, managed {
     description    : String(255);
     standardTime   : Decimal(10, 2);
     timeUnit       : String(3) default 'MIN';
+    scheduledStartDate : DateTime;
+    scheduledEndDate   : DateTime;
     confirmedTime  : Decimal(10, 2) default 0;
     yieldQty       : Decimal(15, 3) default 0;
     scrapQty       : Decimal(15, 3) default 0;
@@ -217,6 +230,43 @@ entity QualityInspectionLots : cuid, managed {
     status         : String(10) default 'CRTD'; // CRTD, INSP, COMP
     inspector      : Association to Users;
     decisionDate   : DateTime;
+}
+
+entity OrderStatusChanges : cuid, managed {
+    order       : Association to ProductionOrders;
+    oldStatus   : String(10);
+    newStatus   : String(10);
+    changedBy   : String(100);
+    changedAt   : DateTime;
+    remark      : String(255);
+}
+
+entity SchedulingMargins : cuid, managed {
+    key_code    : String(3);  // e.g. '001'
+    description : String(100);
+    floatBefore : Decimal(5,2) default 1;  // days
+    floatAfter  : Decimal(5,2) default 1;  // days
+    plant       : Association to Plants;
+}
+
+entity BatchNumbers : cuid, managed {
+    batchNumber : String(10);
+    material    : Association to Materials;
+    plant       : Association to Plants;
+    order       : Association to ProductionOrders;
+    quantity    : Decimal(15,3);
+    unit        : String(3) default 'PC';
+    createdOn   : Date;
+}
+
+entity OutputItems : cuid, managed {
+    order        : Association to ProductionOrders;
+    outputType   : String(6) default 'PP_PRT';  // e.g. 'PP_PRT', 'PP_SHOP'
+    description  : String(100);
+    transmission : String(20) default 'PRINT';   // 'PRINT', 'EMAIL'
+    status       : String(10) default 'NEW';     // 'NEW', 'SENT', 'ERROR'
+    scheduledAt  : DateTime;
+    sentAt       : DateTime;
 }
 
 entity ProductionNotifications : cuid, managed {

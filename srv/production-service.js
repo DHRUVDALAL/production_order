@@ -1,6 +1,7 @@
 import cds from '@sap/cds';
 import OrderRepository from './repositories/OrderRepository.js';
 import MaterialRepository from './repositories/MaterialRepository.js';
+import { broadcastEvent } from './server.js';
 
 const orderRepo = new OrderRepository();
 const materialRepo = new MaterialRepository();
@@ -257,137 +258,146 @@ export default class ProductionService extends cds.ApplicationService {
         let hasSyncedOrders = false;
         let hasSyncedMovements = false;
 
-        // ================================================================
-        // READ HANDLER: ProductionOrders
-        // Syncs live data from SAP → local DB before serving to frontend
-        // ================================================================
-        this.before('READ', 'ProductionOrders', async (req) => {
-            try {
-                if (hasSyncedOrders) {
-                    console.log('[SAP SYNC] Skipping SAP fetch (already synced in this session).');
-                    return;
-                }
-                console.log('[SAP SYNC] Fetching ProductionOrders from SAP...');
-                const sapOrders = await sapOrderSrv.run(
-                    SELECT.from(A_ProductionOrder_2).orderBy('ManufacturingOrder desc').limit(200)
-                );
-
-                for (const sapOrder of (sapOrders || [])) {
-                    const plant   = await resolveOrCreatePlant(sapOrder.ProductionPlant);
-                    const plantId = plant?.ID || null;
-                    // The order header material is by definition a finished good.
-                    const mat     = await resolveOrCreateMaterial(sapOrder.Material, plantId, 'FINISHED');
-                    const sloc    = await resolveOrCreateSloc(sapOrder.StorageLocation, plantId);
-
-                    const existing = await SELECT.one.from('sap.production.portal.ProductionOrders')
-                        .where({ orderNumber: sapOrder.ManufacturingOrder });
-
-                    // Public Cloud has no delivered-qty or actual start/end
-                    // date on the header, so those local fields are left alone.
-                    const sapOrderStatus = deriveOrderStatus(sapOrder);
-                    const orderData = {
-                        orderNumber     : sapOrder.ManufacturingOrder,
-                        material_ID     : mat?.ID || null,
-                        plant_ID        : plantId,
-                        storageLocation_ID: sloc?.ID || null,
-                        targetQty       : parseFloat(sapOrder.TotalQuantity) || 0,
-                        confirmedQty    : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
-                        status          : sapOrderStatus,
-                        plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
-                        plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
-                        actualStartDate : sapOrder.MfgOrderActualReleaseDate || null
-                    };
-
-                    if (existing) {
-                        await UPDATE('sap.production.portal.ProductionOrders')
-                            .set(orderData)
-                            .where({ ID: existing.ID });
+        // Helper to perform async background sync with SAP S/4HANA Public Cloud
+        const syncSapOrdersInBackground = (requestedOrderNum = null) => {
+            setImmediate(async () => {
+                try {
+                    console.log('[SAP BACKGROUND SYNC] Starting non-blocking fetch from SAP S/4HANA...');
+                    let sapOrders = [];
+                    if (requestedOrderNum) {
+                        sapOrders = await sapOrderSrv.run(
+                            SELECT.from(A_ProductionOrder_2).where({ ManufacturingOrder: requestedOrderNum })
+                        );
                     } else {
-                        await INSERT.into('sap.production.portal.ProductionOrders')
-                            .entries({ ID: cds.utils.uuid(), ...orderData });
+                        sapOrders = await sapOrderSrv.run(
+                            SELECT.from(A_ProductionOrder_2).orderBy('ManufacturingOrder desc').limit(200)
+                        );
                     }
 
-                    // Sync Operations for this order
-                    try {
-                        const sapOps = await sapOrderSrv.run(
-                            SELECT.from(A_ProductionOrderOperation_2)
-                                  .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
-                        );
-                        const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                    let updatedCount = 0;
+                    for (const sapOrder of (sapOrders || [])) {
+                        const plant   = await resolveOrCreatePlant(sapOrder.ProductionPlant);
+                        const plantId = plant?.ID || null;
+                        const mat     = await resolveOrCreateMaterial(sapOrder.Material, plantId, 'FINISHED');
+                        const sloc    = await resolveOrCreateSloc(sapOrder.StorageLocation, plantId);
+
+                        const existing = await SELECT.one.from('sap.production.portal.ProductionOrders')
                             .where({ orderNumber: sapOrder.ManufacturingOrder });
 
-                        for (const sapOp of (sapOps || [])) {
-                            const wc = await resolveOrCreateWorkCenter(sapOp.WorkCenter, plantId);
-                            const existingOp = await SELECT.one.from('sap.production.portal.OrderOperations')
-                                .where({ order_ID: localOrder.ID, sequence: parseInt(sapOp.ManufacturingOrderOperation) || 0 });
+                        const sapOrderStatus = deriveOrderStatus(sapOrder);
+                        const orderData = {
+                            orderNumber     : sapOrder.ManufacturingOrder,
+                            material_ID     : mat?.ID || null,
+                            plant_ID        : plantId,
+                            storageLocation_ID: sloc?.ID || null,
+                            targetQty       : parseFloat(sapOrder.TotalQuantity) || 0,
+                            confirmedQty    : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
+                            status          : sapOrderStatus,
+                            plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
+                            plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
+                            actualStartDate : sapOrder.MfgOrderActualReleaseDate || null
+                        };
 
-                            // Public Cloud operations carry no confirmed work
-                            // time or scrap quantity — those live on the
-                            // confirmation records, so local values are kept.
-                            const opData = {
-                                order_ID      : localOrder.ID,
-                                sequence      : parseInt(sapOp.ManufacturingOrderOperation) || 0,
-                                workCenter_ID : wc?.ID || null,
-                                description   : sapOp.MfgOrderOperationText || `Operation ${sapOp.ManufacturingOrderOperation}`,
-                                standardTime  : parseFloat(sapOp.WorkCenterStandardWorkQty1) || 0,
-                                timeUnit      : sapOp.WorkCenterStandardWorkQtyUnit1 || 'MIN',
-                                yieldQty      : parseFloat(sapOp.OpTotalConfirmedYieldQty) || 0,
-                                status        : deriveOperationStatus(sapOp, sapOrderStatus)
-                            };
-
-                            if (existingOp) {
-                                await UPDATE('sap.production.portal.OrderOperations').set(opData).where({ ID: existingOp.ID });
-                            } else {
-                                await INSERT.into('sap.production.portal.OrderOperations').entries({ ID: cds.utils.uuid(), ...opData });
-                            }
+                        if (existing) {
+                            await UPDATE('sap.production.portal.ProductionOrders')
+                                .set(orderData)
+                                .where({ ID: existing.ID });
+                        } else {
+                            await INSERT.into('sap.production.portal.ProductionOrders')
+                                .entries({ ID: cds.utils.uuid(), ...orderData });
                         }
-                    } catch (opErr) {
-                        console.warn(`[SAP SYNC] Could not sync operations for ${sapOrder.ManufacturingOrder}:`, opErr.message);
-                    }
+                        updatedCount++;
 
-                    // Sync Components (BOM) for this order
-                    try {
-                        const sapComps = await sapOrderSrv.run(
-                            SELECT.from(A_ProductionOrderComponent_2)
-                                  .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
-                        );
-                        const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
-                            .where({ orderNumber: sapOrder.ManufacturingOrder });
+                        // Sync Operations
+                        try {
+                            const sapOps = await sapOrderSrv.run(
+                                SELECT.from(A_ProductionOrderOperation_2)
+                                      .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
+                            );
+                            const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                                .where({ orderNumber: sapOrder.ManufacturingOrder });
 
-                        for (const sapComp of (sapComps || [])) {
-                            const compMat = await resolveOrCreateMaterial(sapComp.Material, plantId);
-                            // Register the component's storage location too, so
-                            // the picker offers every SAP-backed location.
-                            await resolveOrCreateSloc(sapComp.StorageLocation, plantId);
-                            const existingComp = await SELECT.one.from('sap.production.portal.OrderComponents')
+                            for (const sapOp of (sapOps || [])) {
+                                const wc = await resolveOrCreateWorkCenter(sapOp.WorkCenter, plantId);
+                                const existingOp = await SELECT.one.from('sap.production.portal.OrderOperations')
+                                    .where({ order_ID: localOrder.ID, sequence: parseInt(sapOp.ManufacturingOrderOperation) || 0 });
+
+                                const opData = {
+                                    order_ID      : localOrder.ID,
+                                    sequence      : parseInt(sapOp.ManufacturingOrderOperation) || 0,
+                                    workCenter_ID : wc?.ID || null,
+                                    description   : sapOp.MfgOrderOperationText || `Operation ${sapOp.ManufacturingOrderOperation}`,
+                                    standardTime  : parseFloat(sapOp.WorkCenterStandardWorkQty1) || 0,
+                                    timeUnit      : sapOp.WorkCenterStandardWorkQtyUnit1 || 'MIN',
+                                    yieldQty      : parseFloat(sapOp.OpTotalConfirmedYieldQty) || 0,
+                                    status        : deriveOperationStatus(sapOp, sapOrderStatus)
+                                };
+
+                                if (existingOp) {
+                                    await UPDATE('sap.production.portal.OrderOperations').set(opData).where({ ID: existingOp.ID });
+                                } else {
+                                    await INSERT.into('sap.production.portal.OrderOperations').entries({ ID: cds.utils.uuid(), ...opData });
+                                }
+                            }
+                        } catch (opErr) {}
+
+                        // Sync Components
+                        try {
+                            const sapComps = await sapOrderSrv.run(
+                                SELECT.from(A_ProductionOrderComponent_2)
+                                      .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
+                            );
+                            const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
                                 .where({ order_ID: localOrder.ID, componentMaterial_ID: compMat?.ID });
 
-                            const compData = {
-                                order_ID             : localOrder.ID,
-                                componentMaterial_ID : compMat?.ID || null,
-                                requiredQty          : parseFloat(sapComp.RequiredQuantity) || 0,
-                                issuedQty            : parseFloat(sapComp.WithdrawnQuantity) || 0,
-                                unit                 : sapComp.BaseUnit || 'PC',
-                                isBackflushed        : !!sapComp.MatlCompIsMarkedForBackflush,
-                                status               : deriveComponentStatus(sapComp)
-                            };
+                            for (const sapComp of (sapComps || [])) {
+                                const compMat = await resolveOrCreateMaterial(sapComp.Material, plantId);
+                                await resolveOrCreateSloc(sapComp.StorageLocation, plantId);
+                                const existingComp = await SELECT.one.from('sap.production.portal.OrderComponents')
+                                    .where({ order_ID: localOrder.ID, componentMaterial_ID: compMat?.ID });
 
-                            if (existingComp) {
-                                await UPDATE('sap.production.portal.OrderComponents').set(compData).where({ ID: existingComp.ID });
-                            } else {
-                                await INSERT.into('sap.production.portal.OrderComponents').entries({ ID: cds.utils.uuid(), ...compData });
+                                const compData = {
+                                    order_ID             : localOrder.ID,
+                                    componentMaterial_ID : compMat?.ID || null,
+                                    requiredQty          : parseFloat(sapComp.RequiredQuantity) || 0,
+                                    issuedQty            : parseFloat(sapComp.WithdrawnQuantity) || 0,
+                                    unit                 : sapComp.BaseUnit || 'PC',
+                                    isBackflushed        : !!sapComp.MatlCompIsMarkedForBackflush,
+                                    status               : deriveComponentStatus(sapComp)
+                                };
+
+                                if (existingComp) {
+                                    await UPDATE('sap.production.portal.OrderComponents').set(compData).where({ ID: existingComp.ID });
+                                } else {
+                                    await INSERT.into('sap.production.portal.OrderComponents').entries({ ID: cds.utils.uuid(), ...opData });
+                                }
                             }
-                        }
-                    } catch (compErr) {
-                        console.warn(`[SAP SYNC] Could not sync components for ${sapOrder.ManufacturingOrder}:`, compErr.message);
+                        } catch (compErr) {}
                     }
-                }
 
-                console.log(`[SAP SYNC] ProductionOrders synced: ${(sapOrders || []).length} records`);
-                hasSyncedOrders = true;
-            } catch (err) {
-                console.warn('[SAP SYNC] Could not sync ProductionOrders from SAP (running on local data):', err.message);
-            }
+                    console.log(`[SAP BACKGROUND SYNC] Complete: ${updatedCount} orders processed`);
+                    
+                    // Broadcast event to UI over WebSocket to seamlessly update UI without page reload
+                    broadcastEvent({
+                        source: 'SAP_BACKGROUND_SYNC',
+                        eventType: 'ProductionOrder.BackgroundSyncCompleted',
+                        timestamp: new Date().toISOString()
+                    });
+                } catch (err) {
+                    console.warn('[SAP BACKGROUND SYNC] Non-blocking sync notice:', err.message);
+                }
+            });
+        };
+
+        // Initial background sync on service startup
+        syncSapOrdersInBackground();
+
+        // ================================================================
+        // READ HANDLER: ProductionOrders (Zero Delay Local Response)
+        // ================================================================
+        this.before('READ', 'ProductionOrders', async (req) => {
+            // Instantly trigger background sync without blocking response
+            syncSapOrdersInBackground(req.data?.orderNumber);
         });
 
         // ================================================================

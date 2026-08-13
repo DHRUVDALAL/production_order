@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useRealTime } from '../contexts/RealTimeContext';
 import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2, DollarSign, PieChart, ListFilter, Scale } from 'lucide-react';
 
 export const ProductionOrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const { lastEvent } = useRealTime();
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (lastEvent) {
+      console.log('[Live Refresh]: Invalidating orderDetail query due to event:', lastEvent.eventType);
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+    }
+  }, [lastEvent, id, queryClient]);
   const [grQty, setGrQty] = useState('');
   const [grSlocId, setGrSlocId] = useState('');
   const [showGrForm, setShowGrForm] = useState(false);
@@ -38,8 +47,8 @@ export const ProductionOrderDetail: React.FC = () => {
     }
   });
 
-  // Fetch Order details
-  const { data: order, isLoading } = useQuery({
+  // Fetch Order details with optimistic placeholder caching
+  const { data: order, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['orderDetail', id],
     queryFn: async () => {
       const res = await api.get(`/odata/v4/production/ProductionOrders(${id})?$expand=material,plant,storageLocation,operations($orderby=sequence asc;$expand=workCenter),components($expand=componentMaterial),goodsMovements($expand=material)`);
@@ -49,19 +58,28 @@ export const ProductionOrderDetail: React.FC = () => {
       try {
         const [costsRes, costItemsRes] = await Promise.all([
           api.get(`/odata/v4/production/OrderCosts?$filter=order_ID eq ${id}`),
-          api.get(`/odata/v4/production/OrderCostItemizations?$filter=order_ID eq ${id}&$orderby=itemNumber asc`)
+          api.get(`/odata/v4/production/OrderCostItems?$filter=order_ID eq ${id}`)
         ]);
-        orderData.costs = costsRes.data?.value?.[0] || null;
+        orderData.costs = costsRes.data?.value || [];
         orderData.costItems = costItemsRes.data?.value || [];
-      } catch (costErr) {
-        console.warn('Could not fetch cost details:', costErr);
-        orderData.costs = null;
+      } catch (err) {
+        console.warn('Order costs or cost items fetch failed:', err);
+        orderData.costs = [];
         orderData.costItems = [];
       }
 
       return orderData;
-    }
+    },
+    placeholderData: (previousData) => previousData
   });
+
+  if (isLoading && !order) {
+    return (
+      <div style={{ padding: '3rem', fontFamily: 'var(--font-sans)', color: '#6a7b8c' }}>
+        Loading order details...
+      </div>
+    );
+  }
 
   // Cost calculation action mutation
   const calculateCostsMutation = useMutation({

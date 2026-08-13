@@ -81,6 +81,10 @@ export const Inventory: React.FC = () => {
     );
   }
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterPlant, setFilterPlant] = useState('ALL');
+  const [filterStockStatus, setFilterStockStatus] = useState('ALL');
+
   // Calculate live stock balances in memory by aggregating GoodsMovements
   const calculateStock = (matId: string, plantId: string) => {
     const matMovs = movements?.filter((m: any) => m.material_ID === matId && m.plant_ID === plantId) || [];
@@ -125,10 +129,43 @@ export const Inventory: React.FC = () => {
   // Find storage locations for local plant
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === pId) || [];
 
-  // Filter materials list
-  const filteredMats = filterGroup === 'ALL'
-    ? materials
-    : materials?.filter((m: any) => m.materialGroup === filterGroup);
+  // Multi-criteria filter logic
+  const filteredMats = materials?.filter((m: any) => {
+    // 1. Search Query Filter (Code or Description)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchCode = m.code?.toLowerCase().includes(q);
+      const matchDesc = m.description?.toLowerCase().includes(q);
+      if (!matchCode && !matchDesc) return false;
+    }
+
+    // 2. Material Group Filter
+    if (filterGroup !== 'ALL' && m.materialGroup !== filterGroup) {
+      return false;
+    }
+
+    // 3. Plant Filter
+    if (filterPlant !== 'ALL' && m.plant_ID !== filterPlant) {
+      return false;
+    }
+
+    // 4. Stock Availability Status Filter
+    if (filterStockStatus !== 'ALL') {
+      const stock = calculateStock(m.ID, m.plant_ID);
+      if (filterStockStatus === 'IN_STOCK' && stock <= 0) return false;
+      if (filterStockStatus === 'ZERO_STOCK' && stock !== 0) return false;
+      if (filterStockStatus === 'NEGATIVE_STOCK' && stock >= 0) return false;
+    }
+
+    return true;
+  });
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setFilterGroup('ALL');
+    setFilterPlant('ALL');
+    setFilterStockStatus('ALL');
+  };
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>
@@ -209,17 +246,77 @@ export const Inventory: React.FC = () => {
         </div>
       )}
 
-      {/* Filters and Table */}
+      {/* Filters Toolbar and Table */}
       <div className="sap-card">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem', paddingBottom: '1rem', borderBottom: '1px solid #eee' }}>
+        {/* Multi-Criteria Filter Bar */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem', paddingBottom: '1.25rem', borderBottom: '1px solid #e2e8f0' }}>
+          {/* Search Field */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Search Material</label>
+            <input 
+              type="text"
+              placeholder="Material code, description..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="sap-input"
+              style={{ fontSize: '0.85rem' }}
+            />
+          </div>
+
+          {/* Plant Filter */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Filter by Plant</label>
+            <select 
+              value={filterPlant}
+              onChange={(e) => setFilterPlant(e.target.value)}
+              className="sap-input"
+              style={{ fontSize: '0.85rem' }}
+            >
+              <option value="ALL">All Plants</option>
+              {plants?.map((p: any) => (
+                <option key={p.ID} value={p.ID}>{p.code} - {p.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Stock Level Filter */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>Stock Availability</label>
+            <select 
+              value={filterStockStatus}
+              onChange={(e) => setFilterStockStatus(e.target.value)}
+              className="sap-input"
+              style={{ fontSize: '0.85rem' }}
+            >
+              <option value="ALL">All Stock Levels</option>
+              <option value="IN_STOCK">In Stock (&gt; 0 PC)</option>
+              <option value="ZERO_STOCK">Zero Stock (0 PC)</option>
+              <option value="NEGATIVE_STOCK">Negative Balance</option>
+            </select>
+          </div>
+
+          {/* Reset Filters */}
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <button 
+              onClick={resetFilters}
+              className="sap-btn sap-btn-secondary"
+              style={{ width: '100%', fontSize: '0.85rem', height: '36px' }}
+            >
+              Reset Filters
+            </button>
+          </div>
+        </div>
+
+        {/* Material Category Quick Pills */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
           <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#555' }}>Filter Category:</span>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {['ALL', 'RAW', 'FINISHED'].map((g) => (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {['ALL', 'RAW', 'FINISHED', 'COMPONENT'].map((g) => (
               <button
                 key={g}
                 onClick={() => setFilterGroup(g)}
                 style={{
-                  padding: '4px 10px',
+                  padding: '4px 12px',
                   borderRadius: '12px',
                   border: '1px solid #ced4da',
                   backgroundColor: filterGroup === g ? '#0a6ed1' : '#ffffff',
@@ -230,7 +327,7 @@ export const Inventory: React.FC = () => {
                   transition: 'all 0.15s'
                 }}
               >
-                {g === 'ALL' ? 'All Materials' : g === 'RAW' ? 'Raw Materials (RM)' : 'Finished Assemblies (FG)'}
+                {g === 'ALL' ? 'All Materials' : g === 'RAW' ? 'Raw Materials (RM)' : g === 'FINISHED' ? 'Finished Assemblies (FG)' : 'Components'}
               </button>
             ))}
           </div>
@@ -249,28 +346,36 @@ export const Inventory: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredMats?.map((m: any) => {
-                const stock = calculateStock(m.ID, m.plant_ID);
-                return (
-                  <tr key={m.ID}>
-                    <td style={{ fontWeight: 600, color: '#32363a' }}>{m.code}</td>
-                    <td>{m.description}</td>
-                    <td>
-                      <span className={`sap-badge`} style={{
-                        backgroundColor: m.materialGroup === 'RAW' ? '#e2e7ec' : '#e8f4fd',
-                        color: m.materialGroup === 'RAW' ? '#5c6b77' : '#0d6efd'
-                      }}>
-                        {m.materialGroup}
-                      </span>
-                    </td>
-                    <td>{m.plant?.name} ({m.plant?.code})</td>
-                    <td>${parseFloat(m.standardPrice).toFixed(2)} {m.currency}</td>
-                    <td style={{ fontWeight: 700, color: stock > 0 ? '#2b7c2b' : '#bb0000' }}>
-                      {stock.toLocaleString()} PC
-                    </td>
-                  </tr>
-                );
-              })}
+              {filteredMats && filteredMats.length > 0 ? (
+                filteredMats.map((m: any) => {
+                  const stock = calculateStock(m.ID, m.plant_ID);
+                  return (
+                    <tr key={m.ID}>
+                      <td style={{ fontWeight: 600, color: '#32363a' }}>{m.code}</td>
+                      <td>{m.description}</td>
+                      <td>
+                        <span className={`sap-badge`} style={{
+                          backgroundColor: m.materialGroup === 'RAW' ? '#e2e7ec' : m.materialGroup === 'FINISHED' ? '#e8f4fd' : '#fff3bf',
+                          color: m.materialGroup === 'RAW' ? '#5c6b77' : m.materialGroup === 'FINISHED' ? '#0d6efd' : '#f59f00'
+                        }}>
+                          {m.materialGroup}
+                        </span>
+                      </td>
+                      <td>{m.plant?.name || m.plant_ID} ({m.plant?.code || 'N/A'})</td>
+                      <td>${parseFloat(m.standardPrice || 0).toFixed(2)} {m.currency || 'USD'}</td>
+                      <td style={{ fontWeight: 700, color: stock > 0 ? '#2b7c2b' : stock === 0 ? '#6a7b8c' : '#bb0000' }}>
+                        {stock.toLocaleString()} PC
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                    No materials found matching the current search &amp; filter criteria.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

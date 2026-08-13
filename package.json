@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "@cap-js/sqlite": "^3",
     "@sap/cds": "^10",
-    "@cap-js/sqlite": "^3"
+    "docx": "^9.7.1",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -1,14 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useRealTime } from '../contexts/RealTimeContext';
 import { Plus, Filter, Calendar, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
+  const { lastEvent } = useRealTime();
   const queryClient = useQueryClient();
   const location = useLocation();
+
+  // Automatically refresh orders query when a live event arrives
+  useEffect(() => {
+    if (lastEvent) {
+      console.log('[Live Refresh]: Invalidating ordersList query due to event:', lastEvent.eventType);
+      queryClient.invalidateQueries({ queryKey: ['ordersList'] });
+    }
+  }, [lastEvent, queryClient]);
   
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,13 +56,14 @@ export const ProductionOrders: React.FC = () => {
   const [initialStatus, setInitialStatus] = useState('CRTD'); // CRTD or DRAFT
   const [formError, setFormError] = useState('');
 
-  // Queries
+  // Queries with optimistic placeholder caching (no flash on refetch)
   const { data: orders, isLoading: ordersLoading } = useQuery({
     queryKey: ['ordersList'],
     queryFn: async () => {
       const res = await api.get('/odata/v4/production/ProductionOrders?$orderby=orderNumber desc&$expand=material,plant,storageLocation');
       return res.data?.value || [];
-    }
+    },
+    placeholderData: (previousData) => previousData
   });
 
   // Master data pickers are restricted to isSapSynced rows. Locally seeded

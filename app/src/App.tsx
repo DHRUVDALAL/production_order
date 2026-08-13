@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { RealTimeProvider } from './contexts/RealTimeContext';
 import { RouteGuard } from './components/RouteGuard';
 import { ShellBar } from './components/ShellBar';
 import { Login } from './pages/Login';
@@ -27,58 +28,60 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/unauthorized" element={<Unauthorized />} />
+      <RealTimeProvider>
+        <Router>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/unauthorized" element={<Unauthorized />} />
 
-          {/* Protected Routes */}
-          <Route path="/" element={
-            <RouteGuard>
-              <AppLayout><Dashboard /></AppLayout>
-            </RouteGuard>
-          } />
+            {/* Protected Routes */}
+            <Route path="/" element={
+              <RouteGuard>
+                <AppLayout><Dashboard /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/orders" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
-              <AppLayout><ProductionOrders /></AppLayout>
-            </RouteGuard>
-          } />
+            <Route path="/orders" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
+                <AppLayout><ProductionOrders /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/orders/:id" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
-              <AppLayout><ProductionOrderDetail /></AppLayout>
-            </RouteGuard>
-          } />
+            <Route path="/orders/:id" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'QUAL_INSPECTOR', 'PROD_OPERATOR']}>
+                <AppLayout><ProductionOrderDetail /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/operations" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_OPERATOR', 'PLANT_SUPV', 'PROD_PLANNER', 'PLANT_MGR']}>
-              <AppLayout><Operations /></AppLayout>
-            </RouteGuard>
-          } />
+            <Route path="/operations" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_OPERATOR', 'PLANT_SUPV', 'PROD_PLANNER', 'PLANT_MGR']}>
+                <AppLayout><Operations /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/quality" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'QUAL_INSPECTOR', 'PLANT_SUPV', 'PROD_PLANNER', 'PLANT_MGR']}>
-              <AppLayout><QualityInspection /></AppLayout>
-            </RouteGuard>
-          } />
+            <Route path="/quality" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'QUAL_INSPECTOR', 'PLANT_SUPV', 'PROD_PLANNER', 'PLANT_MGR']}>
+                <AppLayout><QualityInspection /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/inventory" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'PROD_PLANNER']}>
-              <AppLayout><Inventory /></AppLayout>
-            </RouteGuard>
-          } />
+            <Route path="/inventory" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR', 'PROD_PLANNER']}>
+                <AppLayout><Inventory /></AppLayout>
+              </RouteGuard>
+            } />
 
-          <Route path="/admin" element={
-            <RouteGuard allowedRoles={['SYS_ADMIN']}>
-              <AppLayout><Admin /></AppLayout>
-            </RouteGuard>
-          } />
-          
-          <Route path="*" element={<RouteGuard><AppLayout><Dashboard /></AppLayout></RouteGuard>} />
-        </Routes>
-      </Router>
+            <Route path="/admin" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN']}>
+                <AppLayout><Admin /></AppLayout>
+              </RouteGuard>
+            } />
+            
+            <Route path="*" element={<RouteGuard><AppLayout><Dashboard /></AppLayout></RouteGuard>} />
+          </Routes>
+        </Router>
+      </RealTimeProvider>
     </AuthProvider>
   );
 }

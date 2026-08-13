@@ -1,7 +1,8 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, LayoutDashboard, ClipboardList, ShieldAlert, PackageCheck, Wrench, Settings } from 'lucide-react';
+import { useRealTime } from '../contexts/RealTimeContext';
+import { LogOut, LayoutDashboard, ClipboardList, ShieldAlert, PackageCheck, Wrench, Settings, RefreshCw } from 'lucide-react';
 
 export const ShellBar: React.FC = () => {
   const { user, logout } = useAuth();
@@ -84,7 +85,8 @@ export const ShellBar: React.FC = () => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-
+        {/* Real-time Event Mesh Sync Status Badge */}
+        <RealTimeStatusBadge />
 
         <div style={{ textAlign: 'right', fontSize: '0.75rem' }}>
           <div style={{ fontWeight: 600 }}>{user.name}</div>
@@ -112,5 +114,96 @@ export const ShellBar: React.FC = () => {
         </button>
       </div>
     </header>
+  );
+};
+
+const RealTimeStatusBadge: React.FC = () => {
+  const { isConnected, lastEvent, triggerSync } = useRealTime();
+  const [showToast, setShowToast] = React.useState(false);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  React.useEffect(() => {
+    if (lastEvent) {
+      setShowToast(true);
+      const timer = setTimeout(() => setShowToast(false), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [lastEvent]);
+
+  const handleManualSync = () => {
+    setIsRefreshing(true);
+    triggerSync();
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 800);
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', position: 'relative' }}>
+      <button 
+        onClick={handleManualSync}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '4px 12px',
+          borderRadius: '14px',
+          backgroundColor: isConnected ? 'rgba(40, 167, 69, 0.25)' : 'rgba(220, 53, 69, 0.25)',
+          border: `1px solid ${isConnected ? '#28a745' : '#dc3545'}`,
+          fontSize: '0.75rem',
+          fontWeight: 600,
+          color: '#ffffff',
+          cursor: 'pointer',
+          outline: 'none',
+          transition: 'all 0.2s ease'
+        }}
+        title="Click to manually refresh and sync live data from SAP S/4HANA Public Cloud"
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isConnected ? 'rgba(40, 167, 69, 0.4)' : 'rgba(220, 53, 69, 0.4)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isConnected ? 'rgba(40, 167, 69, 0.25)' : 'rgba(220, 53, 69, 0.25)'; }}
+      >
+        <span style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '50%',
+          backgroundColor: isConnected ? '#28a745' : '#dc3545',
+          boxShadow: isConnected ? '0 0 8px #28a745' : 'none'
+        }} />
+        {isConnected ? 'SAP Live Sync: Active' : 'Live Sync: Offline'}
+        <RefreshCw size={13} style={{ marginLeft: '4px', animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
+      </button>
+
+      {showToast && lastEvent && (() => {
+        const isManual = lastEvent.source === 'MANUAL_USER_TRIGGER';
+        const accentColor = isManual ? '#28a745' : '#3b82f6';
+        
+        let title = isManual ? '✔ Sync Complete' : '⚡ SAP Live Event';
+        let message = isManual 
+          ? 'Successfully synced with SAP S/4HANA Public Cloud' 
+          : `${lastEvent.eventType.replace('ProductionOrder.', '').replace('sap.s4.beh.productionorder.v1.ProductionOrder.', '')}${lastEvent.orderId ? ` (Order #${lastEvent.orderId})` : ''}`;
+
+        return (
+          <div style={{
+            position: 'absolute',
+            top: '38px',
+            right: '0',
+            backgroundColor: '#1e293b',
+            color: '#ffffff',
+            padding: '8px 14px',
+            borderRadius: '6px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            fontSize: '0.8rem',
+            whiteSpace: 'nowrap',
+            zIndex: 1000,
+            borderLeft: `4px solid ${accentColor}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ fontWeight: 700, color: accentColor }}>{title}:</span>
+            <span>{message}</span>
+          </div>
+        );
+      })()}
+    </div>
   );
 };

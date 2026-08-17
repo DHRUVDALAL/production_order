@@ -4,7 +4,17 @@ export interface RealTimeEvent {
   source: string;
   eventType: string;
   orderId?: string;
-  timestamp: string;
+  status?: string;
+  targetQty?: number;
+  timestamp?: string;
+  telemetry?: {
+    sapEventTimestamp?: string;
+    capReceivedTimestamp?: string;
+    capBroadcastTimestamp?: string;
+    capProcessingLatencyMs?: number;
+    clientReceivedTimestamp?: string;
+    totalPipelineLatencyMs?: number;
+  };
   payload?: any;
   message?: string;
   supportedEvents?: string[];
@@ -55,7 +65,16 @@ export const RealTimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         socket.onmessage = (event) => {
           try {
             const data: RealTimeEvent = JSON.parse(event.data);
-            console.log('[WebSocket Client]: Live event received:', data);
+            const clientReceivedTimestamp = new Date().toISOString();
+
+            if (data.telemetry?.sapEventTimestamp) {
+              const totalPipelineMs = new Date(clientReceivedTimestamp).getTime() - new Date(data.telemetry.sapEventTimestamp).getTime();
+              data.telemetry.clientReceivedTimestamp = clientReceivedTimestamp;
+              data.telemetry.totalPipelineLatencyMs = totalPipelineMs;
+              console.log(`[WebSocket Telemetry]: End-to-End Event Latency = ${totalPipelineMs}ms (CAP Processing: ${data.telemetry.capProcessingLatencyMs}ms)`);
+            } else {
+              console.log('[WebSocket Client]: Live event received:', data);
+            }
             
             if (data.eventType === 'CONNECTED' && data.supportedEvents) {
               setSupportedEvents(data.supportedEvents);

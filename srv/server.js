@@ -44,47 +44,106 @@ cds.on('bootstrap', (app) => {
     // Extract SAP event details (e.g. sap.s4.beh.productionorder.v1.ProductionOrder.Created.v1)
     const eventType = eventPayload.type || eventPayload.eventType || 'ProductionOrder.Changed';
     const orderNumber = eventPayload.data?.ManufacturingOrder || eventPayload.ManufacturingOrder || eventPayload.id;
+    const sapEventTimestamp = eventPayload.time || eventPayload.timestamp || new Date().toISOString();
+    const capReceivedTimestamp = new Date().toISOString();
 
-    if (orderNumber) {
+    // Check if event payload directly contains state changes (e.g. status or targetQty)
+    const eventStatus = eventPayload.data?.OrderIsReleased ? 'REL' :
+                        eventPayload.data?.OrderIsClosed ? 'CLSD' :
+                        eventPayload.data?.OrderIsTechnicallyCompleted ? 'TECO' :
+                        eventPayload.data?.OrderIsConfirmed ? 'CNF' :
+                        eventPayload.data?.OrderIsPartiallyConfirmed ? 'PCNF' : null;
+
+    const eventTargetQty = eventPayload.data?.TotalQuantity ? parseFloat(eventPayload.data.TotalQuantity) : undefined;
+
+    // Fast-path: Update local DB immediately if state is present in payload
+    if (orderNumber && (eventStatus || eventTargetQty)) {
       try {
-        // Fetch authoritative state from SAP S/4HANA Public Cloud
-        const sapRes = await sapCloudSync.fetchOrderFromSap(orderNumber);
-        if (sapRes.success && sapRes.data) {
-          const sapOrder = sapRes.data;
-          const { ProductionOrders } = cds.entities('sap.production.portal');
-          
-          let targetStatus = 'CRTD';
-          if (sapOrder.OrderIsClosed) targetStatus = 'CLSD';
-          else if (sapOrder.OrderIsTechnicallyCompleted) targetStatus = 'TECO';
-          else if (sapOrder.OrderIsConfirmed) targetStatus = 'CNF';
-          else if (sapOrder.OrderIsPartiallyConfirmed) targetStatus = 'PCNF';
-          else if (sapOrder.OrderIsReleased) targetStatus = 'REL';
-
-          await cds.run(
-            UPDATE(ProductionOrders)
-              .set({
-                status: targetStatus,
-                targetQty: parseFloat(sapOrder.TotalQuantity || 0) || undefined
-              })
-              .where({ orderNumber: orderNumber })
-          );
-          console.log(`[SAP INBOUND SYNC] Order ${orderNumber} updated in CAP local DB from SAP event (${targetStatus}).`);
-        }
-      } catch (syncErr) {
-        console.warn(`[SAP INBOUND SYNC] Failed to update CAP DB for ${orderNumber}:`, syncErr.message);
+        const { ProductionOrders } = cds.entities('sap.production.portal');
+        const updateData = {};
+        if (eventStatus) updateData.status = eventStatus;
+        if (eventTargetQty) updateData.targetQty = eventTargetQty;
+        
+        await cds.run(
+          UPDATE(ProductionOrders)
+            .set(updateData)
+            .where({ orderNumber: orderNumber })
+        );
+      } catch (fastErr) {
+        console.warn(`[SAP INBOUND SYNC] Fast-path DB update error for ${orderNumber}:`, fastErr.message);
       }
     }
 
-    // Broadcast to UI web socket clients
+    const capBroadcastTimestamp = new Date().toISOString();
+
+    // Broadcast immediately over WebSocket (Zero blocking latency)
     broadcastEvent({
       source: 'SAP_S4HANA_EVENT_MESH',
       eventType: eventType,
       orderId: orderNumber,
-      timestamp: new Date().toISOString(),
+      status: eventStatus,
+      targetQty: eventTargetQty,
+      telemetry: {
+        sapEventTimestamp,
+        capReceivedTimestamp,
+        capBroadcastTimestamp,
+        capProcessingLatencyMs: new Date(capBroadcastTimestamp).getTime() - new Date(capReceivedTimestamp).getTime()
+      },
       payload: eventPayload
     });
 
-    res.status(200).json({ status: 'SUCCESS', message: 'SAP Event processed, DB synced, and broadcasted to UI clients' });
+    res.status(200).json({ 
+      status: 'SUCCESS', 
+      message: 'SAP Event received and broadcasted immediately to UI',
+      telemetry: {
+        capProcessingLatencyMs: new Date(capBroadcastTimestamp).getTime() - new Date(capReceivedTimestamp).getTime()
+      }
+    });
+
+    // Background Async Reconciliation with SAP S/4HANA (Non-blocking)
+    if (orderNumber && !eventStatus) {
+      setImmediate(async () => {
+        try {
+          const sapRes = await sapCloudSync.fetchOrderFromSap(orderNumber);
+          if (sapRes.success && sapRes.data) {
+            const sapOrder = sapRes.data;
+            const { ProductionOrders } = cds.entities('sap.production.portal');
+            
+            let targetStatus = 'CRTD';
+            if (sapOrder.OrderIsClosed) targetStatus = 'CLSD';
+            else if (sapOrder.OrderIsTechnicallyCompleted) targetStatus = 'TECO';
+            else if (sapOrder.OrderIsConfirmed) targetStatus = 'CNF';
+            else if (sapOrder.OrderIsPartiallyConfirmed) targetStatus = 'PCNF';
+            else if (sapOrder.OrderIsReleased) targetStatus = 'REL';
+
+            await cds.run(
+              UPDATE(ProductionOrders)
+                .set({
+                  status: targetStatus,
+                  targetQty: parseFloat(sapOrder.TotalQuantity || 0) || undefined
+                })
+                .where({ orderNumber: orderNumber })
+            );
+
+            // Secondary broadcast with confirmed authoritative SAP state
+            broadcastEvent({
+              source: 'SAP_S4HANA_RECONCILIATION',
+              eventType: eventType,
+              orderId: orderNumber,
+              status: targetStatus,
+              targetQty: parseFloat(sapOrder.TotalQuantity || 0) || undefined,
+              telemetry: {
+                sapEventTimestamp,
+                capReceivedTimestamp,
+                capReconciledTimestamp: new Date().toISOString()
+              }
+            });
+          }
+        } catch (syncErr) {
+          console.warn(`[SAP INBOUND SYNC] Background reconciliation error for ${orderNumber}:`, syncErr.message);
+        }
+      });
+    }
   });
 });
 

@@ -14,8 +14,23 @@ export const ProductionOrderDetail: React.FC = () => {
 
   useEffect(() => {
     if (lastEvent) {
-      console.log('[Live Refresh]: Invalidating orderDetail query due to event:', lastEvent.eventType);
-      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      console.log('[Live Refresh]: Processing real-time event:', lastEvent.eventType, 'Order:', lastEvent.orderId);
+      
+      // Fast path: Direct query cache mutation if orderId matches current order
+      if (lastEvent.orderId && lastEvent.status) {
+        queryClient.setQueryData(['orderDetail', id], (oldData: any) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            status: lastEvent.status || oldData.status,
+            targetQty: lastEvent.targetQty !== undefined ? lastEvent.targetQty : oldData.targetQty
+          };
+        });
+      }
+
+      // Background soft invalidation for complete relation sync
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
     }
   }, [lastEvent, id, queryClient]);
   const [grQty, setGrQty] = useState('');

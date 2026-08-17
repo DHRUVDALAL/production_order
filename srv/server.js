@@ -1,5 +1,6 @@
 import cds from '@sap/cds';
 import { WebSocketServer, WebSocket } from 'ws';
+import { sapCloudSync } from './services/SapCloudSyncService.js';
 
 let wss = null;
 
@@ -36,24 +37,54 @@ cds.on('bootstrap', (app) => {
   });
 
   // Webhook endpoint to receive SAP Event Mesh notifications
-  app.post('/api/events/sap-production-order', expressJsonMiddleware, (req, res) => {
+  app.post('/api/events/sap-production-order', expressJsonMiddleware, async (req, res) => {
     const eventPayload = req.body;
     console.log('[SAP Event Mesh webhook received]:', JSON.stringify(eventPayload));
 
     // Extract SAP event details (e.g. sap.s4.beh.productionorder.v1.ProductionOrder.Created.v1)
     const eventType = eventPayload.type || eventPayload.eventType || 'ProductionOrder.Changed';
-    const orderId = eventPayload.data?.ManufacturingOrder || eventPayload.ManufacturingOrder || eventPayload.id;
+    const orderNumber = eventPayload.data?.ManufacturingOrder || eventPayload.ManufacturingOrder || eventPayload.id;
+
+    if (orderNumber) {
+      try {
+        // Fetch authoritative state from SAP S/4HANA Public Cloud
+        const sapRes = await sapCloudSync.fetchOrderFromSap(orderNumber);
+        if (sapRes.success && sapRes.data) {
+          const sapOrder = sapRes.data;
+          const { ProductionOrders } = cds.entities('sap.production.portal');
+          
+          let targetStatus = 'CRTD';
+          if (sapOrder.OrderIsClosed) targetStatus = 'CLSD';
+          else if (sapOrder.OrderIsTechnicallyCompleted) targetStatus = 'TECO';
+          else if (sapOrder.OrderIsConfirmed) targetStatus = 'CNF';
+          else if (sapOrder.OrderIsPartiallyConfirmed) targetStatus = 'PCNF';
+          else if (sapOrder.OrderIsReleased) targetStatus = 'REL';
+
+          await cds.run(
+            UPDATE(ProductionOrders)
+              .set({
+                status: targetStatus,
+                targetQty: parseFloat(sapOrder.TotalQuantity || 0) || undefined
+              })
+              .where({ orderNumber: orderNumber })
+          );
+          console.log(`[SAP INBOUND SYNC] Order ${orderNumber} updated in CAP local DB from SAP event (${targetStatus}).`);
+        }
+      } catch (syncErr) {
+        console.warn(`[SAP INBOUND SYNC] Failed to update CAP DB for ${orderNumber}:`, syncErr.message);
+      }
+    }
 
     // Broadcast to UI web socket clients
     broadcastEvent({
       source: 'SAP_S4HANA_EVENT_MESH',
       eventType: eventType,
-      orderId: orderId,
+      orderId: orderNumber,
       timestamp: new Date().toISOString(),
       payload: eventPayload
     });
 
-    res.status(200).json({ status: 'SUCCESS', message: 'Event broadcasted to connected UI clients' });
+    res.status(200).json({ status: 'SUCCESS', message: 'SAP Event processed, DB synced, and broadcasted to UI clients' });
   });
 });
 

@@ -2,6 +2,7 @@ import cds from '@sap/cds';
 import OrderRepository from './repositories/OrderRepository.js';
 import MaterialRepository from './repositories/MaterialRepository.js';
 import { broadcastEvent } from './server.js';
+import { sapCloudSync } from './services/SapCloudSyncService.js';
 
 const orderRepo = new OrderRepository();
 const materialRepo = new MaterialRepository();
@@ -285,6 +286,8 @@ export default class ProductionService extends cds.ApplicationService {
                             .where({ orderNumber: sapOrder.ManufacturingOrder });
 
                         const sapOrderStatus = deriveOrderStatus(sapOrder);
+                        const effectiveStatus = sapOrderStatus;
+
                         const orderData = {
                             orderNumber     : sapOrder.ManufacturingOrder,
                             material_ID     : mat?.ID || null,
@@ -292,7 +295,7 @@ export default class ProductionService extends cds.ApplicationService {
                             storageLocation_ID: sloc?.ID || null,
                             targetQty       : parseFloat(sapOrder.TotalQuantity) || 0,
                             confirmedQty    : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || 0,
-                            status          : sapOrderStatus,
+                            status          : effectiveStatus,
                             plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                             plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
                             actualStartDate : sapOrder.MfgOrderActualReleaseDate || null
@@ -330,7 +333,7 @@ export default class ProductionService extends cds.ApplicationService {
                                     standardTime  : parseFloat(sapOp.WorkCenterStandardWorkQty1) || 0,
                                     timeUnit      : sapOp.WorkCenterStandardWorkQtyUnit1 || 'MIN',
                                     yieldQty      : parseFloat(sapOp.OpTotalConfirmedYieldQty) || 0,
-                                    status        : deriveOperationStatus(sapOp, sapOrderStatus)
+                                    status        : deriveOperationStatus(sapOp, effectiveStatus)
                                 };
 
                                 if (existingOp) {
@@ -391,6 +394,11 @@ export default class ProductionService extends cds.ApplicationService {
 
         // Initial background sync on service startup
         syncSapOrdersInBackground();
+
+        // Periodic background sync every 15 seconds to pull live updates from SAP Public Cloud
+        setInterval(() => {
+            syncSapOrdersInBackground();
+        }, 15000);
 
         // ================================================================
         // READ HANDLER: ProductionOrders (Zero Delay Local Response)
@@ -1002,31 +1010,16 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Cannot release order in status ${order.status}. Must be in CRTD or MACA.`);
             }
 
-            // ----- Release on SAP -----
-            try {
-                // OrderIsReleased is read-only in Public Cloud — PATCHing it
-                // fails with "The Data Service Request is required to be
-                // conditional". The API exposes a dedicated ReleaseOrder
-                // function import, which runs the real release logic in S/4.
-                // A_ProductionOrder_2 is ConcurrencyMode="Fixed": S/4 rejects
-                // unconditional calls with "Precondition required", and it
-                // will not accept If-Match: * — only the current ETag.
-                const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
-                if (!etag) {
-                    return req.error(404, `Order ${order.orderNumber} not found in SAP.`);
+            // ----- Release on SAP S/4HANA Public Cloud -----
+            if (order.orderNumber) {
+                const result = await sapCloudSync.callFunctionImport(order.orderNumber, 'ReleaseOrder');
+                if (!result.success && result.statusCode !== 200) {
+                    console.error(`[SAP] Could not release order on SAP Public Cloud:`, result.error);
+                    return req.error(400, `SAP S/4HANA Public Cloud Release failed: ${result.error || 'Request rejected by SAP'}`);
                 }
-
-                await sapOrderSrv.send({
-                    method : 'POST',
-                    path   : `ReleaseOrder?ManufacturingOrder='${encodeURIComponent(order.orderNumber)}'`,
-                    headers: { 'If-Match': etag }
-                });
-            } catch (err) {
-                console.error('[SAP] Could not release order on SAP:', err.message);
-                return req.error(500, `SAP Error: ${err.message}`);
             }
 
-            // Update local status
+            // Update local status only after SAP succeeds
             await UPDATE('sap.production.portal.ProductionOrders')
                 .set({ status: 'REL' })
                 .where({ ID: order.ID });
@@ -1711,6 +1704,14 @@ this.on('changeNetQuantity', async (req) => {
     const oldQty = parseFloat(order.targetQty);
     const ratio = newQty / oldQty;
 
+    // Sync quantity change to SAP S/4HANA Public Cloud FIRST
+    if (order.orderNumber) {
+        const patchRes = await sapCloudSync.patchOrder(order.orderNumber, { TotalQuantity: newQty });
+        if (!patchRes.success) {
+            return req.error(400, `SAP S/4HANA Public Cloud Quantity update failed: ${patchRes.error || 'Request rejected by SAP'}`);
+        }
+    }
+
     // Proportionally update all component required quantities
     for (const comp of (order.components || [])) {
         const newReq = Math.round(parseFloat(comp.requiredQty) * ratio * 1000) / 1000;
@@ -1751,6 +1752,17 @@ this.on('changeDatesAndTimes', async (req) => {
 
     const oldDates = { plannedStartDate: order.plannedStartDate, plannedEndDate: order.plannedEndDate };
 
+    // Sync dates change to SAP S/4HANA Public Cloud FIRST
+    if (order.orderNumber) {
+        const patchRes = await sapCloudSync.patchOrder(order.orderNumber, {
+            MfgOrderPlannedStartDate: newBasicStartDate,
+            MfgOrderPlannedEndDate: newBasicEndDate
+        });
+        if (!patchRes.success) {
+            return req.error(400, `SAP S/4HANA Public Cloud Date update failed: ${patchRes.error || 'Request rejected by SAP'}`);
+        }
+    }
+
     await UPDATE('sap.production.portal.ProductionOrders').set({
         plannedStartDate: newBasicStartDate,
         plannedEndDate: newBasicEndDate
@@ -1768,26 +1780,70 @@ this.on('changeDatesAndTimes', async (req) => {
 // ACTION: Read PP Master Data (re-sync BOM and Routing to order)
 // ----------------------------------------------------------------
 this.on('readPPMasterData', async (req) => {
-    const { orderId } = req.data;
+    const {
+        orderId,
+        productionVersion = 'PV01',
+        basicStart,
+        basicFinish,
+        newRouting = true,
+        routingDate,
+        newBOM = true,
+        bomDate
+    } = req.data;
+
     const order = await orderRepo.selectWithOperationsAndComponents(orderId);
     if (!order) return req.error(404, `Order ${orderId} not found.`);
 
     if (['PCNF', 'CNF', 'TECO', 'CLSD'].includes(order.status)) {
-        return req.error(400, `Read PP Master Data not allowed in status ${order.status}. Must be in CRTD or REL.`);
+        return req.error(400, `Read PP Master Data not allowed in status ${order.status}. Must be in CRTD, MACA, or REL.`);
     }
 
-    const bom = await this._getBOMAndComponents(order.material_ID, order.plant_ID);
-    const routing = await this._getRoutingAndOperations(order.material_ID, order.plant_ID);
+    const oldStatus = order.status;
+    const isReleasedOrActive = ['REL', 'MACA', 'STRT'].includes(oldStatus);
+    // For SAP-synced orders, preserve status (e.g. REL remains REL) to align 100% with SAP System of Record
+    const finalStatus = order.orderNumber ? oldStatus : (isReleasedOrActive ? 'CRTD' : oldStatus);
 
-    if (!bom && !routing) {
-        return req.error(400, 'No BOM or Routing found for this material and plant combination.');
+    // 1. Sync basic dates to SAP S/4HANA Public Cloud FIRST
+    if (order.orderNumber) {
+        const startToPatch = basicStart || order.plannedStartDate;
+        const finishToPatch = basicFinish || order.plannedEndDate;
+        const sapPatch = {};
+        if (startToPatch) sapPatch.MfgOrderPlannedStartDate = startToPatch;
+        if (finishToPatch) sapPatch.MfgOrderPlannedEndDate = finishToPatch;
+
+        if (Object.keys(sapPatch).length > 0) {
+            const patchRes = await sapCloudSync.patchOrder(order.orderNumber, sapPatch);
+            if (!patchRes.success) {
+                console.error(`[SAP] Could not update dates on SAP Public Cloud:`, patchRes.error);
+                return req.error(400, `SAP S/4HANA Public Cloud date update failed: ${patchRes.error || 'Request rejected by SAP'}`);
+            }
+        }
     }
+
+    // 2. Update local basic dates and status
+    const dateUpdates = { status: finalStatus };
+    if (basicStart) dateUpdates.plannedStartDate = basicStart;
+    if (basicFinish) dateUpdates.plannedEndDate = basicFinish;
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set(dateUpdates)
+        .where({ ID: order.ID });
+
+    if (isReleasedOrActive) {
+        await recordStatusChange(order.ID, oldStatus, 'CRTD', req.headers['x-user-id'], 'Status of released order is reverted to "Created"');
+        await UPDATE('sap.production.portal.OrderOperations')
+            .set({ status: 'CRTD' })
+            .where({ order_ID: order.ID });
+    }
+
+    const bom = newBOM ? await this._getBOMAndComponents(order.material_ID, order.plant_ID) : null;
+    const routing = newRouting ? await this._getRoutingAndOperations(order.material_ID, order.plant_ID) : null;
 
     let operationsUpdated = 0;
     let componentsUpdated = 0;
 
     // Update operations from routing
-    if (routing?.operations) {
+    if (newRouting && routing?.operations) {
         for (const routingOp of routing.operations) {
             const existingOp = (order.operations || []).find(o => o.sequence === routingOp.sequence);
             if (existingOp) {
@@ -1795,7 +1851,8 @@ this.on('readPPMasterData', async (req) => {
                     description: routingOp.description,
                     standardTime: routingOp.standardTime,
                     timeUnit: routingOp.timeUnit,
-                    workCenter_ID: routingOp.workCenter_ID
+                    workCenter_ID: routingOp.workCenter_ID,
+                    status: 'CRTD'
                 }).where({ ID: existingOp.ID });
                 operationsUpdated++;
             } else {
@@ -1810,7 +1867,7 @@ this.on('readPPMasterData', async (req) => {
                     confirmedTime: 0,
                     yieldQty: 0,
                     scrapQty: 0,
-                    status: order.status === 'REL' ? 'REL' : 'CRTD'
+                    status: 'CRTD'
                 });
                 operationsUpdated++;
             }
@@ -1818,14 +1875,15 @@ this.on('readPPMasterData', async (req) => {
     }
 
     // Update components from BOM
-    if (bom?.components) {
+    if (newBOM && bom?.components) {
         for (const bomComp of bom.components) {
             const existingComp = (order.components || []).find(c => c.componentMaterial_ID === bomComp.componentMaterial_ID);
             const newRequiredQty = parseFloat(bomComp.requiredQty) * parseFloat(order.targetQty);
             if (existingComp) {
                 await UPDATE('sap.production.portal.OrderComponents').set({
                     requiredQty: newRequiredQty,
-                    unit: bomComp.unit
+                    unit: bomComp.unit,
+                    status: 'RESV'
                 }).where({ ID: existingComp.ID });
                 componentsUpdated++;
             } else {
@@ -1847,11 +1905,17 @@ this.on('readPPMasterData', async (req) => {
     }
 
     await this._logAudit(req.headers['x-user-id'], 'READ_PP_MASTER_DATA', 'ProductionOrders', order.ID,
-        JSON.stringify({ operationsCount: (order.operations || []).length, componentsCount: (order.components || []).length }),
-        JSON.stringify({ operationsUpdated, componentsUpdated })
+        JSON.stringify({ status: oldStatus }),
+        JSON.stringify({ status: finalStatus, operationsUpdated, componentsUpdated, productionVersion })
     );
 
-    return { success: true, operationsUpdated, componentsUpdated };
+    return {
+        success: true,
+        operationsUpdated,
+        componentsUpdated,
+        revertedToCreated: isReleasedOrActive,
+        status: finalStatus
+    };
 });
 
 // ----------------------------------------------------------------
@@ -2166,6 +2230,15 @@ this.on('closeOrder', async (req) => {
     }
 
     const oldStatus = order.status;
+
+    // Sync Close Order to SAP S/4HANA Public Cloud FIRST
+    if (order.orderNumber) {
+        const result = await sapCloudSync.syncStatusToSap(order.orderNumber, 'CLSD');
+        if (!result.success) {
+            console.error(`[SAP] Could not close order on SAP Public Cloud:`, result.error);
+            return req.error(400, `SAP S/4HANA Public Cloud Close Order failed: ${result.error || 'Request rejected by SAP'}`);
+        }
+    }
 
     await UPDATE('sap.production.portal.ProductionOrders')
         .set({ status: 'CLSD' })

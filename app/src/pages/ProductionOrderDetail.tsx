@@ -24,6 +24,7 @@ export const ProductionOrderDetail: React.FC = () => {
   const [showCostsModal, setShowCostsModal] = useState(false);
   const [activeCostTab, setActiveCostTab] = useState<'analysis' | 'itemization' | 'split' | 'balance'>('analysis');
   const [errorMsg, setErrorMsg] = useState('');
+  const [modalErrorMsg, setModalErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isEditingQty, setIsEditingQty] = useState(false);
   const [editQtyValue, setEditQtyValue] = useState('');
@@ -36,6 +37,17 @@ export const ProductionOrderDetail: React.FC = () => {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   const [showReadMasterModal, setShowReadMasterModal] = useState(false);
+  const [ppSelectionType, setPpSelectionType] = useState<'PV' | 'NONE'>('PV');
+  const [ppProductionVersion, setPpProductionVersion] = useState('PV01');
+  const [ppBasicStart, setPpBasicStart] = useState('');
+  const [ppBasicFinish, setPpBasicFinish] = useState('');
+  const [ppNewRouting, setPpNewRouting] = useState(true);
+  const [ppRoutingDate, setPpRoutingDate] = useState('');
+  const [ppNewBOM, setPpNewBOM] = useState(true);
+  const [ppBomDate, setPpBomDate] = useState('');
+  const [showReadInfoModal, setShowReadInfoModal] = useState(false);
+  const [readInfoMessage, setReadInfoMessage] = useState('');
+
   const [newStartDate, setNewStartDate] = useState('');
   const [newEndDate, setNewEndDate] = useState('');
   const [newQty, setNewQty] = useState('');
@@ -72,7 +84,7 @@ export const ProductionOrderDetail: React.FC = () => {
       try {
         const [costsRes, costItemsRes] = await Promise.all([
           api.get(`/odata/v4/production/OrderCosts?$filter=order_ID eq ${id}`),
-          api.get(`/odata/v4/production/OrderCostItems?$filter=order_ID eq ${id}`)
+          api.get(`/odata/v4/production/OrderCostItemizations?$filter=order_ID eq ${id}`)
         ]);
         orderData.costs = costsRes.data?.value || [];
         orderData.costItems = costItemsRes.data?.value || [];
@@ -86,14 +98,6 @@ export const ProductionOrderDetail: React.FC = () => {
     },
     placeholderData: (previousData) => previousData
   });
-
-  if (isLoading && !order) {
-    return (
-      <div style={{ padding: '3rem', fontFamily: 'var(--font-sans)', color: '#6a7b8c' }}>
-        Loading order details...
-      </div>
-    );
-  }
 
   // Cost calculation action mutation
   const calculateCostsMutation = useMutation({
@@ -191,6 +195,7 @@ export const ProductionOrderDetail: React.FC = () => {
 
   const scheduleOrderMutation = useMutation({
     mutationFn: async (type: string) => {
+      setModalErrorMsg('');
       const res = await api.post('/odata/v4/production/scheduleOrder', { orderId: id, schedulingType: type });
       return res.data;
     },
@@ -199,11 +204,16 @@ export const ProductionOrderDetail: React.FC = () => {
       setSuccessMsg(`Order scheduled successfully! Scheduled Start: ${data?.scheduledStart?.split('T')[0] || 'N/A'}, End: ${data?.scheduledEnd?.split('T')[0] || 'N/A'}`);
       setShowScheduleModal(false);
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Scheduling failed.')
+    onError: (err: any) => {
+      const msg = err.response?.data?.error?.message || 'Scheduling failed.';
+      setErrorMsg(msg);
+      setModalErrorMsg(msg);
+    }
   });
 
   const changeDatesMutation = useMutation({
     mutationFn: async () => {
+      setModalErrorMsg('');
       const res = await api.post('/odata/v4/production/changeDatesAndTimes', {
         orderId: id, newBasicStartDate: newStartDate, newBasicEndDate: newEndDate, newStartTime: '00:00', newEndTime: '24:00'
       });
@@ -214,11 +224,16 @@ export const ProductionOrderDetail: React.FC = () => {
       setSuccessMsg('Dates updated successfully.');
       setShowChangeDatesModal(false);
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Date change failed.')
+    onError: (err: any) => {
+      const msg = err.response?.data?.error?.message || 'Date change failed.';
+      setErrorMsg(msg);
+      setModalErrorMsg(msg);
+    }
   });
 
   const changeQtyMutation = useMutation({
     mutationFn: async () => {
+      setModalErrorMsg('');
       const res = await api.post('/odata/v4/production/changeNetQuantity', {
         orderId: id, newQuantity: parseFloat(newQty), reason: changeQtyReason
       });
@@ -229,24 +244,49 @@ export const ProductionOrderDetail: React.FC = () => {
       setSuccessMsg(data?.message || 'Quantity updated successfully.');
       setShowChangeQtyModal(false);
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Quantity change failed.')
+    onError: (err: any) => {
+      const msg = err.response?.data?.error?.message || 'Quantity change failed.';
+      setErrorMsg(msg);
+      setModalErrorMsg(msg);
+    }
   });
 
   const readMasterDataMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post('/odata/v4/production/readPPMasterData', { orderId: id });
+      setModalErrorMsg('');
+      const todayStr = new Date().toISOString().split('T')[0];
+      const res = await api.post('/odata/v4/production/readPPMasterData', {
+        orderId: id,
+        productionVersion: ppSelectionType === 'PV' ? ppProductionVersion : '',
+        basicStart: ppBasicStart || order?.plannedStartDate,
+        basicFinish: ppBasicFinish || order?.plannedEndDate,
+        newRouting: ppNewRouting,
+        routingDate: ppRoutingDate || todayStr,
+        newBOM: ppNewBOM,
+        bomDate: ppBomDate || todayStr
+      });
       return res.data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
-      setSuccessMsg(`PP Master Data read: ${data?.operationsUpdated || 0} operations, ${data?.componentsUpdated || 0} components updated.`);
       setShowReadMasterModal(false);
+      if (data?.revertedToCreated) {
+        setReadInfoMessage('Status of released order is reverted to "Created"');
+        setShowReadInfoModal(true);
+      } else {
+        setSuccessMsg(`PP Master Data read: ${data?.operationsUpdated || 0} operations, ${data?.componentsUpdated || 0} components updated.`);
+      }
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Read PP Master Data failed.')
+    onError: (err: any) => {
+      const msg = err.response?.data?.error?.message || (err.message === 'Network Error' || !err.response ? 'Backend CAP server connection offline (http://localhost:4004).' : 'Read PP Master Data failed.');
+      setErrorMsg(msg);
+      setModalErrorMsg(msg);
+    }
   });
 
   const createBatchMutation = useMutation({
     mutationFn: async () => {
+      setModalErrorMsg('');
       const res = await api.post('/odata/v4/production/createBatch', { orderId: id, quantity: parseFloat(order?.targetQty) });
       return res.data;
     },
@@ -255,7 +295,11 @@ export const ProductionOrderDetail: React.FC = () => {
       setSuccessMsg(`Batch ${data?.batchNumber} created successfully!`);
       setShowBatchModal(false);
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Create Batch failed.')
+    onError: (err: any) => {
+      const msg = err.response?.data?.error?.message || 'Create Batch failed.';
+      setErrorMsg(msg);
+      setModalErrorMsg(msg);
+    }
   });
 
   const tecoMutation = useMutation({
@@ -685,7 +729,7 @@ export const ProductionOrderDetail: React.FC = () => {
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { calculateCostsMutation.mutate(); setShowCostsModal(true); }}>Cost Order</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowReadMasterModal(true)}>Read PP Master Data</button>
+            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
           </div>
           
           <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
@@ -1340,14 +1384,210 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       )}
 
+      {/* Read PP Master Data SAP Modal (Image 21) */}
       {showReadMasterModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
-            <h3 style={{ marginTop: 0 }}>Read PP Master Data</h3>
-            <p>This will re-read BOM and Routing from master data and update operations and components.</p>
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button className="sap-btn sap-btn-secondary" onClick={() => setShowReadMasterModal(false)}>Cancel</button>
-              <button className="sap-btn sap-btn-primary" onClick={() => readMasterDataMutation.mutate()} disabled={readMasterDataMutation.isPending}>Confirm</button>
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex',
+          justifyContent: 'center', alignItems: 'center', zIndex: 1050
+        }}>
+          <div style={{
+            backgroundColor: '#1e2530', color: '#f0f3f6', borderRadius: '8px',
+            width: '420px', padding: '1.25rem 1.5rem', boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+            fontFamily: 'var(--font-sans)', border: '1px solid #323b48'
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#ffffff' }}>Read PP master data</h3>
+              <button onClick={() => { setShowReadMasterModal(false); setModalErrorMsg(''); }} style={{ background: 'none', border: 'none', color: '#9aa5b5', cursor: 'pointer', fontSize: '1.1rem' }}>✕</button>
+            </div>
+
+            {modalErrorMsg && (
+              <div style={{
+                backgroundColor: '#3b181e', color: '#f87171', border: '1px solid #7f1d1d',
+                borderRadius: '4px', padding: '0.6rem 0.8rem', fontSize: '0.82rem', marginBottom: '1.25rem',
+                display: 'flex', alignItems: 'center', gap: '0.5rem'
+              }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                <span>{modalErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Selection Type */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <input
+                  type="radio"
+                  id="pvSel"
+                  name="ppSel"
+                  checked={ppSelectionType === 'PV'}
+                  onChange={() => setPpSelectionType('PV')}
+                  style={{ accentColor: '#0a6ed1' }}
+                />
+                <label htmlFor="pvSel" style={{ fontSize: '0.85rem', minWidth: '130px', fontWeight: 500 }}>Production Version</label>
+                <input
+                  type="text"
+                  value={ppProductionVersion}
+                  onChange={e => setPpProductionVersion(e.target.value)}
+                  disabled={ppSelectionType !== 'PV'}
+                  style={{
+                    backgroundColor: '#131920', color: '#ffffff', border: '1px solid #3a4659',
+                    borderRadius: '4px', padding: '3px 8px', fontSize: '0.82rem', width: '80px'
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <input
+                  type="radio"
+                  id="noSel"
+                  name="ppSel"
+                  checked={ppSelectionType === 'NONE'}
+                  onChange={() => setPpSelectionType('NONE')}
+                  style={{ accentColor: '#0a6ed1' }}
+                />
+                <label htmlFor="noSel" style={{ fontSize: '0.85rem', fontWeight: 500 }}>No Selection</label>
+              </div>
+            </div>
+
+            {/* Basic Dates Section */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e1e7ed', paddingBottom: '0.25rem', borderBottom: '1px solid #323b48', marginBottom: '0.75rem' }}>
+                Basic Dates
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingLeft: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>Basic Finish:</span>
+                  <input
+                    type="date"
+                    value={ppBasicFinish || order?.plannedEndDate || ''}
+                    onChange={e => setPpBasicFinish(e.target.value)}
+                    style={{ backgroundColor: '#131920', color: '#ffffff', border: '1px solid #3a4659', borderRadius: '4px', padding: '3px 8px', fontSize: '0.8rem', width: '150px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>Basic Start:</span>
+                  <input
+                    type="date"
+                    value={ppBasicStart || order?.plannedStartDate || ''}
+                    onChange={e => setPpBasicStart(e.target.value)}
+                    style={{ backgroundColor: '#131920', color: '#ffffff', border: '1px solid #3a4659', borderRadius: '4px', padding: '3px 8px', fontSize: '0.8rem', width: '150px' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Routing Section */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e1e7ed', paddingBottom: '0.25rem', borderBottom: '1px solid #323b48', marginBottom: '0.75rem' }}>
+                Routing
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingLeft: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>New Routing:</span>
+                  <input
+                    type="checkbox"
+                    checked={ppNewRouting}
+                    onChange={e => setPpNewRouting(e.target.checked)}
+                    style={{ accentColor: '#0a6ed1', width: '16px', height: '16px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>Explosion Date:</span>
+                  <input
+                    type="date"
+                    value={ppRoutingDate || new Date().toISOString().split('T')[0]}
+                    onChange={e => setPpRoutingDate(e.target.value)}
+                    style={{ backgroundColor: '#131920', color: '#ffffff', border: '1px solid #3a4659', borderRadius: '4px', padding: '3px 8px', fontSize: '0.8rem', width: '150px' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Bill of Material Section */}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#e1e7ed', paddingBottom: '0.25rem', borderBottom: '1px solid #323b48', marginBottom: '0.75rem' }}>
+                Bill of Material
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingLeft: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>New BOM:</span>
+                  <input
+                    type="checkbox"
+                    checked={ppNewBOM}
+                    onChange={e => setPpNewBOM(e.target.checked)}
+                    style={{ accentColor: '#0a6ed1', width: '16px', height: '16px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', color: '#9aa5b5' }}>BOM Explosion Date:</span>
+                  <input
+                    type="date"
+                    value={ppBomDate || new Date().toISOString().split('T')[0]}
+                    onChange={e => setPpBomDate(e.target.value)}
+                    style={{ backgroundColor: '#131920', color: '#ffffff', border: '1px solid #3a4659', borderRadius: '4px', padding: '3px 8px', fontSize: '0.8rem', width: '150px' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #323b48' }}>
+              <button
+                onClick={() => readMasterDataMutation.mutate()}
+                disabled={readMasterDataMutation.isPending}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#4dabf7', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+              >
+                {readMasterDataMutation.isPending ? 'Processing...' : 'Continue'}
+              </button>
+              <button
+                onClick={() => setShowReadMasterModal(false)}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#4dabf7', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAP Information Popup Modal (Image 22) */}
+      {showReadInfoModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex',
+          justifyContent: 'center', alignItems: 'center', zIndex: 1100
+        }}>
+          <div style={{
+            backgroundColor: '#1e2530', color: '#f0f3f6', borderRadius: '8px',
+            width: '420px', padding: '1.25rem 1.5rem', boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+            fontFamily: 'var(--font-sans)', border: '1px solid #323b48'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600, color: '#ffffff' }}>Information</h3>
+              <button onClick={() => setShowReadInfoModal(false)} style={{ background: 'none', border: 'none', color: '#9aa5b5', cursor: 'pointer', fontSize: '1.1rem' }}>✕</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '0.5rem 0' }}>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%', border: '2px solid #4dabf7',
+                color: '#4dabf7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '1.1rem'
+              }}>
+                i
+              </div>
+              <span style={{ fontSize: '0.9rem', color: '#e1e7ed' }}>{readInfoMessage}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid #323b48' }}>
+              <button
+                onClick={() => setShowReadInfoModal(false)}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#4dabf7', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+              >
+                Continue
+              </button>
+              <button
+                onClick={() => alert('SAP Info: When PP master data is re-read for a released order, its operations and reservations are re-created in Created (CRTD) status.')}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#4dabf7', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+              >
+                Help
+              </button>
             </div>
           </div>
         </div>

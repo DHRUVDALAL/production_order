@@ -99,10 +99,21 @@ service ProductionService {
     ) returns { success: Boolean; };
 
     // Read PP Master Data
-    action readPPMasterData(orderId: UUID) returns {
+    action readPPMasterData(
+        orderId           : UUID,
+        productionVersion : String,
+        basicStart        : Date,
+        basicFinish       : Date,
+        newRouting        : Boolean,
+        routingDate       : Date,
+        newBOM            : Boolean,
+        bomDate           : Date
+    ) returns {
         success           : Boolean;
         operationsUpdated : Integer;
         componentsUpdated : Integer;
+        revertedToCreated : Boolean;
+        status            : String;
     };
 
     // Get Status Changes history

@@ -101,7 +101,8 @@ export const ProductionOrderDetail: React.FC = () => {
           api.get(`/odata/v4/production/OrderCosts?$filter=order_ID eq ${id}`),
           api.get(`/odata/v4/production/OrderCostItemizations?$filter=order_ID eq ${id}`)
         ]);
-        orderData.costs = costsRes.data?.value || [];
+        const costsList = costsRes.data?.value || [];
+        orderData.costs = Array.isArray(costsList) ? (costsList[0] || null) : costsList;
         orderData.costItems = costItemsRes.data?.value || [];
       } catch (err) {
         console.warn('Order costs or cost items fetch failed:', err);

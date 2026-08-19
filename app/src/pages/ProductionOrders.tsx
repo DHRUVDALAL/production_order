@@ -4,7 +4,7 @@ import api from '../services/api';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useRealTime } from '../contexts/RealTimeContext';
-import { Plus, Filter, Calendar, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Filter, Calendar, Layers, ArrowUpDown, ArrowUp, ArrowDown, Search, Copy, CheckCircle, RefreshCw, AlertCircle } from 'lucide-react';
 
 export const ProductionOrders: React.FC = () => {
   const { user } = useAuth();
@@ -38,6 +38,16 @@ export const ProductionOrders: React.FC = () => {
     }
   }, [location.state]);
 
+  // Copy From Order State
+  const [copyFromOrderNumber, setCopyFromOrderNumber] = useState('');
+  const [isLoadingReference, setIsLoadingReference] = useState(false);
+  const [referenceSuccessMsg, setReferenceSuccessMsg] = useState('');
+  const [showValueHelpModal, setShowValueHelpModal] = useState(false);
+  const [valueHelpSearchTerm, setValueHelpSearchTerm] = useState('');
+  const [valueHelpPlantFilter, setValueHelpPlantFilter] = useState('');
+  const [valueHelpResults, setValueHelpResults] = useState<any[]>([]);
+  const [isLoadingValueHelp, setIsLoadingValueHelp] = useState(false);
+
   // Creation form state
   const [materialId, setMaterialId] = useState('');
   const [plantId, setPlantId] = useState('');
@@ -55,6 +65,23 @@ export const ProductionOrders: React.FC = () => {
   const [releasePeriod, setReleasePeriod] = useState('5');
   const [initialStatus, setInitialStatus] = useState('CRTD'); // CRTD or DRAFT
   const [formError, setFormError] = useState('');
+
+  // Component Overview State during creation
+  const [creationComponentRows, setCreationComponentRows] = useState<Array<{
+    itemNumber: string;
+    componentMaterialCode: string;
+    componentDescription: string;
+    requiredQty: number;
+    unit: string;
+    itemCategory: string;
+    operationSequence: string;
+    sequence: string;
+    plantCode: string;
+    storageLocationCode: string;
+    batchNumber: string;
+    isBackflushed: boolean;
+  }>>([]);
+
 
   // Queries with optimistic placeholder caching (no flash on refetch)
   const { data: orders, isLoading: ordersLoading } = useQuery({
@@ -102,21 +129,9 @@ export const ProductionOrders: React.FC = () => {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['ordersList'] });
       setShowCreateForm(false);
-      // Reset form
-      setMaterialId('');
-      setPlantId('');
-      setPlanningPlantId('');
-      setOrderType('ZPPS');
-      setSlocId('');
-      setTargetQty('100');
-      setPlannedStartDate('');
-      setPlannedEndDate('');
-      setSchedulingType('Backwards');
-      setPriority('');
-      setSchedMarginKey('001');
-      setFloatBeforeProd('2');
-      setFloatAfterProd('1');
-      setReleasePeriod('5');
+      // Reset Copy From State
+      setCopyFromOrderNumber('');
+      setReferenceSuccessMsg('');
       setFormError('');
       
       // Show success toast
@@ -131,6 +146,96 @@ export const ProductionOrders: React.FC = () => {
       setFormError(errMsg);
     }
   });
+
+  // Action: Load Reference Order from SAP
+  const handleLoadReference = async (orderNumToFetch?: string) => {
+    const targetOrderNum = (orderNumToFetch || copyFromOrderNumber).trim();
+    if (!targetOrderNum) {
+      setFormError('Please enter or select a Production Order number in the Copy From section.');
+      return;
+    }
+
+    setFormError('');
+    setReferenceSuccessMsg('');
+    setIsLoadingReference(true);
+
+    try {
+      const res = await api.post('/odata/v4/production/getProductionOrderReference', {
+        orderNumber: targetOrderNum
+      });
+      const data = res.data;
+
+      if (!data || !data.success) {
+        throw new Error(`Production Order ${targetOrderNum} could not be used as a reference.`);
+      }
+
+      // Refetch master data lists to ensure newly synced reference material/plant/sloc appear in dropdown options
+      const [materialsRes, plantsRes, slocsRes] = await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: ['finishedMaterials'],
+          queryFn: async () => {
+            const res = await api.get("/odata/v4/production/Materials?$filter=materialGroup eq 'FINISHED' and isSapSynced eq true&$orderby=code");
+            return res.data?.value || [];
+          }
+        }),
+        queryClient.fetchQuery({
+          queryKey: ['plantsList'],
+          queryFn: async () => {
+            const res = await api.get('/odata/v4/production/Plants?$filter=isSapSynced eq true&$orderby=code');
+            return res.data?.value || [];
+          }
+        }),
+        queryClient.fetchQuery({
+          queryKey: ['slocsList'],
+          queryFn: async () => {
+            const res = await api.get('/odata/v4/production/StorageLocations?$filter=isSapSynced eq true&$orderby=code');
+            return res.data?.value || [];
+          }
+        })
+      ]);
+
+      // Pre-populate creation form fields with authoritative SAP reference data
+      if (data.materialId) setMaterialId(data.materialId);
+      if (data.plantId) {
+        setPlantId(data.plantId);
+        setPlanningPlantId(data.plantId);
+      }
+      if (data.storageLocationId) setSlocId(data.storageLocationId);
+      if (data.orderType) setOrderType(data.orderType);
+      if (data.targetQty) setTargetQty(String(data.targetQty));
+      if (data.plannedStartDate) setPlannedStartDate(data.plannedStartDate);
+      if (data.plannedEndDate) setPlannedEndDate(data.plannedEndDate);
+
+      if (data.components && Array.isArray(data.components)) {
+        setCreationComponentRows(data.components);
+      }
+
+      setReferenceSuccessMsg(`Successfully loaded reference parameters from SAP Order #${data.orderNumber} (${data.materialCode})`);
+    } catch (err: any) {
+      const msg = err.response?.data?.error?.message || err.message || `Production Order ${targetOrderNum} could not be used as a reference.`;
+      setFormError(msg);
+    } finally {
+      setIsLoadingReference(false);
+    }
+  };
+
+  // Action: Search SAP Value Help Dialog Orders
+  const handleSearchValueHelp = async () => {
+    setIsLoadingValueHelp(true);
+    try {
+      const res = await api.post('/odata/v4/production/searchProductionOrders', {
+        searchTerm: valueHelpSearchTerm,
+        plantCode: valueHelpPlantFilter
+      });
+      setValueHelpResults(res.data?.value || res.data || []);
+    } catch (err: any) {
+      console.error('Failed to search SAP Value Help:', err);
+      setValueHelpResults([]);
+    } finally {
+      setIsLoadingValueHelp(false);
+    }
+  };
+
 
   const calculateStartDateFromEnd = (endVal: string, floatBefore: string) => {
     if (!endVal) return;
@@ -392,14 +497,101 @@ export const ProductionOrders: React.FC = () => {
             <h3 className="sap-card-title">New Production Order Details</h3>
           </div>
           {formError && (
-            <div style={{ backgroundColor: '#ffe3e3', border: '1px solid #ffb3b3', color: '#bb0000', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              {formError}
+            <div style={{ backgroundColor: '#ffe3e3', border: '1px solid #ffb3b3', color: '#bb0000', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <AlertCircle size={16} />
+              <span>{formError}</span>
             </div>
           )}
+          {referenceSuccessMsg && (
+            <div style={{ backgroundColor: '#e6f4ea', border: '1px solid #b7e1cd', color: '#137333', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <CheckCircle size={16} />
+              <span>{referenceSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* SAP Standard COPY FROM Section */}
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+            <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1e293b', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Copy size={15} color="#0a6ed1" />
+              <span>Copy From (Reference SAP Production Order)</span>
+            </h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1', minWidth: '280px' }}>
+                <label className="sap-label" style={{ minWidth: '60px', marginBottom: 0 }}>Order:</label>
+                <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    className="sap-input"
+                    placeholder="e.g. 1000002"
+                    value={copyFromOrderNumber}
+                    onChange={(e) => setCopyFromOrderNumber(e.target.value)}
+                    style={{ paddingRight: '2.5rem', textTransform: 'uppercase' }}
+                  />
+                  <button
+                    type="button"
+                    title="SAP Production Order Value Help Search"
+                    onClick={() => {
+                      setShowValueHelpModal(true);
+                      handleSearchValueHelp();
+                    }}
+                    style={{
+                      position: 'absolute',
+                      right: '6px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#0a6ed1',
+                      padding: '4px'
+                    }}
+                  >
+                    <Search size={16} />
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="sap-btn"
+                onClick={() => handleLoadReference()}
+                disabled={isLoadingReference || !copyFromOrderNumber.trim()}
+                style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', color: '#0f172a', fontWeight: 600 }}
+              >
+                {isLoadingReference ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Validating SAP Order...</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={14} />
+                    <span>Copy Reference Data</span>
+                  </>
+                )}
+              </button>
+              {copyFromOrderNumber && (
+                <button
+                  type="button"
+                  className="sap-btn"
+                  onClick={() => {
+                    setCopyFromOrderNumber('');
+                    setReferenceSuccessMsg('');
+                    setFormError('');
+                  }}
+                  style={{ backgroundColor: 'transparent', border: 'none', color: '#64748b', fontSize: '0.8rem', textDecoration: 'underline' }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.5rem', marginBottom: 0 }}>
+              * Selecting an order retrieves reference parameters from SAP S/4HANA Public Cloud. The original order will NOT be modified.
+            </p>
+          </div>
+
           <form onSubmit={handleCreateOrder} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             {/* Group 1: Initial Screen Parameters */}
             <div>
               <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--sap-text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>1. Initial Screen Parameters</h4>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', borderBottom: '1px solid #eee', paddingBottom: '1.25rem' }}>
                 <div className="sap-form-group">
                   <label className="sap-label">Order Type *</label>
@@ -547,6 +739,68 @@ export const ProductionOrders: React.FC = () => {
                   <input type="number" className="sap-input" value={priority} onChange={e => setPriority(e.target.value)} placeholder="0" min="0" style={{ height: '36px' }} />
                 </div>
               </div>
+            </div>
+
+            {/* Group 4: SAP Component Overview (BOM Explosion / Reference Components) */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--sap-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>
+                  4. Component Overview {creationComponentRows.length > 0 ? `(${creationComponentRows.length} Items)` : '(BOM Explosion on Create)'}
+                </h4>
+                <div style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
+                  {creationComponentRows.length > 0 ? 'Authoritative SAP Reference Components Loaded' : 'SAP S/4HANA explodes BOM components automatically upon order creation'}
+                </div>
+              </div>
+
+              {creationComponentRows.length > 0 ? (
+                <div className="sap-table-container" style={{ border: '1px solid #cbd5e1', borderRadius: '6px', overflowX: 'auto' }}>
+                  <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#f8fafc' }}>
+                        <th style={{ width: '60px' }}>Item</th>
+                        <th style={{ width: '130px' }}>* Component</th>
+                        <th>Description</th>
+                        <th style={{ textAlign: 'right', width: '100px' }}>Reqmt Qty</th>
+                        <th style={{ width: '60px' }}>UoM</th>
+                        <th style={{ width: '50px' }}>Category</th>
+                        <th style={{ width: '70px' }}>OpSeq</th>
+                        <th style={{ width: '50px' }}>Seq</th>
+                        <th style={{ width: '70px' }}>Plant</th>
+                        <th style={{ width: '80px' }}>Storage</th>
+                        <th style={{ width: '80px' }}>Batch</th>
+                        <th style={{ width: '90px' }}>Backflush</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {creationComponentRows.map((row, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ fontWeight: 600, color: '#475569' }}>{row.itemNumber || String((idx + 1) * 10).padStart(4, '0')}</td>
+                          <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.componentMaterialCode}</td>
+                          <td>{row.componentDescription}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.requiredQty}</td>
+                          <td>{row.unit}</td>
+                          <td>{row.itemCategory || 'L'}</td>
+                          <td>{row.operationSequence || '0010'}</td>
+                          <td>{row.sequence || '0'}</td>
+                          <td>{row.plantCode}</td>
+                          <td>{row.storageLocationCode}</td>
+                          <td style={{ color: '#94a3b8' }}>{row.batchNumber || '-----------'}</td>
+                          <td>
+                            <input type="checkbox" checked={row.isBackflushed} readOnly disabled style={{ cursor: 'default' }} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ backgroundColor: '#f8fafc', border: '1px border-dashed #cbd5e1', padding: '1.25rem', borderRadius: '6px', textAlign: 'center', color: '#64748b', fontSize: '0.825rem' }}>
+                  <p style={{ margin: 0, fontWeight: 500 }}>No pre-loaded reference components.</p>
+                  <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.75rem', color: '#94a3b8' }}>
+                    Selecting a material and clicking <strong>Create Order</strong> sends the header to SAP S/4HANA Public Cloud, which determines the BOM components and populates the Component Overview.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Radio explosion controls & Action Buttons */}
@@ -812,7 +1066,168 @@ export const ProductionOrders: React.FC = () => {
         </div>
       </div>
 
+      {/* SAP Production Order Value Help Search Modal */}
+      {showValueHelpModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(2px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 9999,
+          padding: '1rem'
+        }}>
+          <div className="sap-card" style={{ width: '100%', maxWidth: '850px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', backgroundColor: '#ffffff', borderRadius: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+            <div className="sap-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', padding: '1rem 1.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Search size={18} color="#0a6ed1" />
+                <h3 className="sap-card-title" style={{ margin: 0, fontSize: '1.1rem', color: '#1e293b' }}>
+                  Select Reference SAP Production Order
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowValueHelpModal(false)}
+                style={{ background: 'none', border: 'none', fontSize: '1.25rem', color: '#64748b', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ padding: '1rem 1.5rem', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '220px' }}>
+                  <label className="sap-label" style={{ fontSize: '0.75rem' }}>Search Order # or Material</label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      className="sap-input"
+                      placeholder="Search order number..."
+                      value={valueHelpSearchTerm}
+                      onChange={(e) => setValueHelpSearchTerm(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearchValueHelp()}
+                    />
+                  </div>
+                </div>
+                <div style={{ width: '180px' }}>
+                  <label className="sap-label" style={{ fontSize: '0.75rem' }}>Filter by Plant</label>
+                  <select
+                    className="sap-input"
+                    value={valueHelpPlantFilter}
+                    onChange={(e) => setValueHelpPlantFilter(e.target.value)}
+                  >
+                    <option value="">All Plants</option>
+                    {plants?.map((p: any) => (
+                      <option key={p.ID} value={p.code}>{p.code} - {p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="sap-btn sap-btn-primary"
+                    onClick={handleSearchValueHelp}
+                    disabled={isLoadingValueHelp}
+                  >
+                    {isLoadingValueHelp ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+                    <span>Search SAP</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Results Table */}
+            <div style={{ overflowY: 'auto', flex: 1, padding: '0.5rem 1.5rem 1.5rem' }}>
+              {isLoadingValueHelp ? (
+                <div style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
+                  <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 0.75rem' }} />
+                  <p style={{ margin: 0 }}>Querying live Production Orders from SAP S/4HANA Public Cloud...</p>
+                </div>
+              ) : valueHelpResults.length === 0 ? (
+                <div style={{ padding: '3rem', textAlign: 'center', color: '#64748b' }}>
+                  <p style={{ margin: 0, fontWeight: 500 }}>No production orders found matching search criteria.</p>
+                  <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '0.25rem' }}>Click "Search SAP" or clear filters to refresh results.</p>
+                </div>
+              ) : (
+                <table className="sap-table" style={{ width: '100%', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left' }}>Order #</th>
+                      <th style={{ textAlign: 'left' }}>Material</th>
+                      <th style={{ textAlign: 'left' }}>Plant</th>
+                      <th style={{ textAlign: 'left' }}>Type</th>
+                      <th style={{ textAlign: 'right' }}>Total Qty</th>
+                      <th style={{ textAlign: 'center' }}>Status</th>
+                      <th style={{ textAlign: 'center' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {valueHelpResults.map((item: any) => (
+                      <tr key={item.orderNumber} style={{ cursor: 'pointer' }} onClick={() => {
+                        setCopyFromOrderNumber(item.orderNumber);
+                        setShowValueHelpModal(false);
+                        handleLoadReference(item.orderNumber);
+                      }}>
+                        <td style={{ fontWeight: 600, color: '#0a6ed1' }}>{item.orderNumber}</td>
+                        <td>{item.materialCode}</td>
+                        <td>{item.plantCode}</td>
+                        <td><span style={{ fontSize: '0.75rem', backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>{item.orderType}</span></td>
+                        <td style={{ textAlign: 'right' }}>{item.targetQty} {item.productionUnit}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            backgroundColor: item.status === 'REL' ? '#e6f4ea' : item.status === 'CRTD' ? '#f1f5f9' : '#e0f2fe',
+                            color: item.status === 'REL' ? '#137333' : item.status === 'CRTD' ? '#475569' : '#0369a1'
+                          }}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            className="sap-btn sap-btn-secondary"
+                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCopyFromOrderNumber(item.orderNumber);
+                              setShowValueHelpModal(false);
+                              handleLoadReference(item.orderNumber);
+                            }}
+                          >
+                            Select Reference
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={{ padding: '0.75rem 1.5rem', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="sap-btn"
+                onClick={() => setShowValueHelpModal(false)}
+                style={{ backgroundColor: '#ffffff', border: '1px solid #cbd5e1' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Toast Notification */}
+
       {toast && (
         <>
           <style>{`
@@ -858,6 +1273,7 @@ export const ProductionOrders: React.FC = () => {
           </div>
         </>
       )}
+
     </div>
   );
 };

@@ -1,13 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useRealTime } from '../contexts/RealTimeContext';
 import { ArrowLeft, CheckCircle2, ShieldAlert, Play, ShoppingCart, Truck, AlertTriangle, Edit2, DollarSign, PieChart, ListFilter, Scale } from 'lucide-react';
 
+export const SAP_SYSTEM_STATUS_MAP: Record<string, string> = {
+  'CRTD': 'Created',
+  'MSPT': 'Material Shortage',
+  'BCRQ': 'Order to be handled in batches',
+  'MANC': 'Mat. availability not checked',
+  'NTUP': 'Dates are not updated',
+  'SETC': 'Settlement rule created',
+  'REL':  'Released',
+  'TECO': 'Technically Completed',
+  'CLSD': 'Closed',
+  'LOKD': 'Locked',
+  'DLFL': 'Deletion Flag',
+  'MACA': 'Mat. Availability Checked',
+  'PCNF': 'Partially Confirmed',
+  'CNF':  'Confirmed',
+  'PDLV': 'Partially Delivered',
+  'DLV':  'Delivered'
+};
+
 export const ProductionOrderDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { lastEvent } = useRealTime();
   const queryClient = useQueryClient();
@@ -68,6 +88,151 @@ export const ProductionOrderDetail: React.FC = () => {
   const [newQty, setNewQty] = useState('');
   const [changeQtyReason, setChangeQtyReason] = useState('');
   const [activeHeaderTab, setActiveHeaderTab] = useState<'general'|'assignment'|'goodsReceipt'|'control'|'masterData'|'longText'|'administration'>('general');
+
+  // Change Mode State & Handlers (CO02 Display/Change Mode)
+  const [isChangeMode, setIsChangeMode] = useState(false);
+  const [editingOpId, setEditingOpId] = useState<string | null>(null);
+  const [editingOpDesc, setEditingOpDesc] = useState('');
+  const [editingOpWc, setEditingOpWc] = useState('');
+  const [editingCompId, setEditingCompId] = useState<string | null>(null);
+  const [editingCompQty, setEditingCompQty] = useState('');
+  const [showApiNotice, setShowApiNotice] = useState<string | null>(null);
+
+  // SAP Header Cascading Menu State
+  const [showSapMenuDropdown, setShowSapMenuDropdown] = useState(false);
+  const [showOrderSubmenu, setShowOrderSubmenu] = useState(false);
+  const [showFunctionsSubmenu, setShowFunctionsSubmenu] = useState(false);
+  const [showRestrictSubmenu, setShowRestrictSubmenu] = useState(false);
+  const [showWmStagingSubmenu, setShowWmStagingSubmenu] = useState(false);
+  const [showGotoSubmenu, setShowGotoSubmenu] = useState(false);
+  const [showCostsSubmenu, setShowCostsSubmenu] = useState(false);
+  const [showMissingPartsSubmenu, setShowMissingPartsSubmenu] = useState(false);
+  const [showLogsSubmenu, setShowLogsSubmenu] = useState(false);
+  const [showOperationSubmenu, setShowOperationSubmenu] = useState(false);
+  const [showOutputSubmenu, setShowOutputSubmenu] = useState(false);
+  const [showReprintModal, setShowReprintModal] = useState(false);
+  const [selectedReprintType, setSelectedReprintType] = useState('PP_PRT');
+
+  // Costs Modal State (Goto -> Costs)
+  const [costModalTitle, setCostModalTitle] = useState<string | null>(null);
+  const [costModalContent, setCostModalContent] = useState<any>(null);
+
+  // Missing Parts Modal State (Goto -> Missing Parts)
+  const [missingPartsModalTitle, setMissingPartsModalTitle] = useState<string | null>(null);
+  const [missingPartsData, setMissingPartsData] = useState<any>(null);
+
+  // Documented Goods Movements Modal State (Goto -> Documented Goods Movements)
+  const [showGoodsMovementsModal, setShowGoodsMovementsModal] = useState(false);
+  const [goodsMovementsData, setGoodsMovementsData] = useState<any[] | null>(null);
+
+  const fetchGoodsMovementsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/getDocumentedGoodsMovements', { orderId: id });
+      return res.data?.value || res.data || [];
+    },
+    onSuccess: (data: any[]) => {
+      setGoodsMovementsData(data);
+      setShowGoodsMovementsModal(true);
+      setShowSapMenuDropdown(false);
+      setShowGotoSubmenu(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to fetch documented goods movements.');
+    }
+  });
+
+  const fetchMissingPartsMutation = useMutation({
+    mutationFn: async ({ actionName, title }: { actionName: string; title: string }) => {
+      const res = await api.post(`/odata/v4/production/${actionName}`, { orderId: id });
+      return { data: res.data?.value || res.data, title };
+    },
+    onSuccess: (res: any) => {
+      setMissingPartsModalTitle(res.title);
+      setMissingPartsData(res.data);
+      setShowSapMenuDropdown(false);
+      setShowGotoSubmenu(false);
+      setShowMissingPartsSubmenu(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to fetch missing parts information.');
+    }
+  });
+
+  const fetchCostViewMutation = useMutation({
+    mutationFn: async ({ actionName, title }: { actionName: string; title: string }) => {
+      const res = await api.post(`/odata/v4/production/${actionName}`, { orderId: id });
+      return { data: res.data?.value || res.data, title };
+    },
+    onSuccess: (res: any) => {
+      setCostModalTitle(res.title);
+      setCostModalContent(res.data);
+      setShowSapMenuDropdown(false);
+      setShowGotoSubmenu(false);
+      setShowCostsSubmenu(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to fetch cost information.');
+    }
+  });
+
+  const stageWmMaterialMutation = useMutation({
+    mutationFn: async ({ isSimulation }: { isSimulation: boolean }) => {
+      const res = await api.post('/odata/v4/production/stageWmMaterial', {
+        orderId: id,
+        isSimulation
+      });
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(data?.message || 'WM Material Staging processed successfully.');
+      if (data?.details) {
+        setShowApiNotice(`${data.message}\n\nDetails: ${data.details}`);
+      }
+      setShowSapMenuDropdown(false);
+      setShowFunctionsSubmenu(false);
+      setShowWmStagingSubmenu(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'WM Material Staging failed.');
+    }
+  });
+
+  const restrictActionMutation = useMutation({
+    mutationFn: async ({ actionName }: { actionName: string }) => {
+      const res = await api.post(`/odata/v4/production/${actionName}`, { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(`Status updated successfully in SAP S/4HANA (New Status: ${data?.status || 'Updated'})`);
+      setShowSapMenuDropdown(false);
+      setShowFunctionsSubmenu(false);
+      setShowRestrictSubmenu(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Operation failed in SAP.');
+    }
+  });
+
+  const reprintOutputMutation = useMutation({
+    mutationFn: async (outputType: string) => {
+      const res = await api.post('/odata/v4/production/reprintOutput', {
+        orderId: id,
+        outputType
+      });
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['outputItems', id] });
+      setSuccessMsg(data?.message || 'Reprint scheduled successfully in SAP Output Management.');
+      setShowReprintModal(false);
+      setShowSapMenuDropdown(false);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Reprint request failed.');
+    }
+  });
 
   const updateQtyMutation = useMutation({
     mutationFn: async (newQty: number) => {
@@ -244,6 +409,62 @@ export const ProductionOrderDetail: React.FC = () => {
       const msg = err.response?.data?.error?.message || 'Date change failed.';
       setErrorMsg(msg);
       setModalErrorMsg(msg);
+    }
+  });
+
+  const updateOpMutation = useMutation({
+    mutationFn: async ({ opId, description, workCenterCode }: { opId: string; description: string; workCenterCode: string }) => {
+      const res = await api.post('/odata/v4/production/updateProductionOrderOperation', {
+        orderId: id,
+        operationId: opId,
+        description,
+        workCenterCode
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Operation updated successfully in SAP S/4HANA!');
+      setEditingOpId(null);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to update operation.');
+    }
+  });
+
+  const updateCompMutation = useMutation({
+    mutationFn: async ({ compId, requiredQty }: { compId: string; requiredQty: number }) => {
+      const res = await api.post('/odata/v4/production/updateProductionOrderComponent', {
+        orderId: id,
+        componentId: compId,
+        requiredQty
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Component updated successfully in SAP S/4HANA!');
+      setEditingCompId(null);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to update component.');
+    }
+  });
+
+  const deleteCompMutation = useMutation({
+    mutationFn: async (compId: string) => {
+      const res = await api.post('/odata/v4/production/deleteProductionOrderComponent', {
+        orderId: id,
+        componentId: compId
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg('Component deleted successfully from SAP S/4HANA!');
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Failed to delete component from SAP.');
     }
   });
 
@@ -442,15 +663,705 @@ export const ProductionOrderDetail: React.FC = () => {
       {/* Two Column Layout (Header / Actions) */}
       <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
         {/* Header Details Card */}
-        <div className="sap-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div className="sap-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', border: isChangeMode ? '2px solid #0a6ed1' : '1px solid var(--sap-border-color)' }}>
           <div>
-            <div className="sap-card-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Production Order: {order.orderNumber}</h2>
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                {(order.status || '').split(' ').map((st: string) => (
-                  <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
-                ))}
+            <div className="sap-card-header" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
+                  Production Order {isChangeMode ? 'Change' : 'Display'}: {order.orderNumber}
+                </h2>
+                <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: isChangeMode ? '#e8f4fd' : '#f1f5f9', color: isChangeMode ? '#0a6ed1' : '#475569', fontWeight: 600 }}>
+                  {isChangeMode ? 'CO02 - Change Mode Active' : 'CO03 - Display Mode'}
+                </span>
               </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  className="sap-btn"
+                  onClick={() => setIsChangeMode(!isChangeMode)}
+                  style={{
+                    backgroundColor: isChangeMode ? '#0a6ed1' : '#ffffff',
+                    color: isChangeMode ? '#ffffff' : '#0a6ed1',
+                    border: '1px solid #0a6ed1',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    padding: '0.35rem 0.85rem'
+                  }}
+                >
+                  {isChangeMode ? 'Switch to Display Mode (CO03)' : 'Switch to Change Mode (CO02)'}
+                </button>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {(order.status || '').split(' ').map((st: string) => (
+                    <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* SAP S/4HANA Header Navigation Action Bar with Menu -> Order -> Output */}
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 0.75rem', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', marginBottom: '1rem', fontSize: '0.75rem', position: 'relative' }}>
+              
+              {/* Menu Button Dropdown Container */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  className="sap-btn"
+                  onClick={() => setShowSapMenuDropdown(!showSapMenuDropdown)}
+                  style={{
+                    backgroundColor: showSapMenuDropdown ? '#0a6ed1' : '#ffffff',
+                    color: showSapMenuDropdown ? '#ffffff' : '#0a6ed1',
+                    border: '1px solid #0a6ed1',
+                    fontWeight: 700,
+                    fontSize: '0.75rem',
+                    padding: '2px 10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <span>Menu</span>
+                  <span style={{ fontSize: '0.65rem' }}>▼</span>
+                </button>
+
+                {/* Level 1: Main Menu Dropdown */}
+                {showSapMenuDropdown && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                    backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                    boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)',
+                    zIndex: 9999, minWidth: '180px', padding: '4px 0'
+                  }}>
+                    {/* Order (Hover/Click Submenu Trigger) */}
+                    <div
+                      className={`sap-menu-item ${showOrderSubmenu ? 'active' : ''}`}
+                      onMouseEnter={() => setShowOrderSubmenu(true)}
+                      onMouseLeave={() => { setShowOrderSubmenu(false); setShowOutputSubmenu(false); }}
+                      onClick={() => setShowOrderSubmenu(!showOrderSubmenu)}
+                      style={{ position: 'relative' }}
+                    >
+                      <span>Order</span>
+                      <span>▸</span>
+
+                      {/* Level 2: Order Submenu */}
+                      {showOrderSubmenu && (
+                        <div style={{
+                          position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                          backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10000, minWidth: '190px', padding: '4px 0'
+                        }}>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.7rem' }}>Other Order (Shift+F5)</div>
+                          <div className="sap-menu-item" onClick={() => window.location.href = '/orders'}>Create</div>
+                          <div className="sap-menu-item" onClick={() => setIsChangeMode(true)}>Change</div>
+                          <div className="sap-menu-item" onClick={() => setIsChangeMode(false)}>Display</div>
+                          <div style={{ borderTop: '1px solid #f1f5f9', margin: '4px 0' }}></div>
+
+                          {/* Output Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showOutputSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowOutputSubmenu(true)}
+                            onMouseLeave={() => setShowOutputSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowOutputSubmenu(!showOutputSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>Output</span>
+                            <span>▸</span>
+
+                            {/* Level 3: Output Submenu (Manage Output Items & Reprint) */}
+                            {showOutputSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '180px', padding: '4px 0'
+                              }}>
+                                <Link
+                                  to={`/orders/${id}/outputs`}
+                                  className="sap-menu-item"
+                                  style={{ textDecoration: 'none', display: 'flex' }}
+                                  onClick={() => setShowSapMenuDropdown(false)}
+                                >
+                                  Manage Output Items
+                                </Link>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowReprintModal(true);
+                                  }}
+                                >
+                                  Reprint
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Functions (Hover/Click Submenu Trigger) */}
+                    <div
+                      className={`sap-menu-item ${showFunctionsSubmenu ? 'active' : ''}`}
+                      onMouseEnter={() => setShowFunctionsSubmenu(true)}
+                      onMouseLeave={() => { setShowFunctionsSubmenu(false); setShowRestrictSubmenu(false); }}
+                      onClick={() => setShowFunctionsSubmenu(!showFunctionsSubmenu)}
+                      style={{ position: 'relative' }}
+                    >
+                      <span>Functions</span>
+                      <span>▸</span>
+
+                      {/* Level 2: Functions Submenu */}
+                      {showFunctionsSubmenu && (
+                        <div style={{
+                          position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                          backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10000, minWidth: '220px', padding: '4px 0'
+                        }}>
+                          <div className="sap-menu-item" onClick={() => releaseOrderMutation.mutate()}>Release (Ctrl+F1)</div>
+                          <div className="sap-menu-item" onClick={() => setShowScheduleModal(true)}>Schedule</div>
+                          <div className="sap-menu-item" onClick={() => checkMaterialMutation.mutate()}>Availability Check</div>
+                          <div className="sap-menu-item" onClick={() => { calculateCostsMutation.mutate(); setShowCostsModal(true); }}>Cost (Ctrl+F7)</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Exchange Sequences</div>
+                          <div className="sap-menu-item" onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Activate Purchase Requisition/Reserv.</div>
+
+                          {/* Restrict Processing Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showRestrictSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowRestrictSubmenu(true)}
+                            onMouseLeave={() => setShowRestrictSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowRestrictSubmenu(!showRestrictSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>Restrict Processing</span>
+                            <span>▸</span>
+
+                            {/* Level 3: Restrict Processing Submenu (Exact SAP ordering) */}
+                            {showRestrictSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '220px', padding: '4px 0'
+                              }}>
+                                {/* 1. Lock */}
+                                {!(order.status || '').includes('LOKD') && !(order.status || '').includes('CLSD') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'lockProductionOrder' })}>Lock</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Lock</div>
+                                )}
+
+                                {/* 2. Unlock */}
+                                {(order.status || '').includes('LOKD') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'unlockProductionOrder' })}>Unlock</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Unlock</div>
+                                )}
+
+                                <div style={{ borderTop: '1px solid #f1f5f9', margin: '4px 0' }}></div>
+
+                                {/* 4. Complete Technically */}
+                                {!(order.status || '').includes('TECO') && !(order.status || '').includes('CLSD') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'technicallyCompleteOrder' })}>Complete Technically</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Complete Technically</div>
+                                )}
+
+                                {/* 5. Revoke Technical Completion */}
+                                {(order.status || '').includes('TECO') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'revokeTechnicalCompletionOrder' })}>Revoke Technical Completion</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Revoke Technical Completion</div>
+                                )}
+
+                                {/* 6. Close */}
+                                {((order.status || '').includes('TECO') || (order.status || '').includes('DLV')) && !(order.status || '').includes('CLSD') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'closeOrder' })}>Close</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Close</div>
+                                )}
+
+                                {/* 7. Undo Close/Complete */}
+                                {(order.status || '').includes('CLSD') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'revokeCloseOrder' })}>Undo Close/Complete</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Undo Close/Complete</div>
+                                )}
+
+                                {/* 8. Deletion Flag Set */}
+                                {!(order.status || '').includes('DLFL') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'setDeletionFlagOrder' })}>Deletion Flag Set</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Deletion Flag Set</div>
+                                )}
+
+                                {/* 9. Deletion Flag Undo */}
+                                {(order.status || '').includes('DLFL') ? (
+                                  <div className="sap-menu-item" onClick={() => restrictActionMutation.mutate({ actionName: 'revokeDeletionFlagOrder' })}>Deletion Flag Undo</div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Deletion Flag Undo</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Deletion Flag</div>
+
+                          {/* WM Material Staging Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showWmStagingSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowWmStagingSubmenu(true)}
+                            onMouseLeave={() => setShowWmStagingSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowWmStagingSubmenu(!showWmStagingSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>WM Material Staging</span>
+                            <span>▸</span>
+
+                            {/* Level 3: WM Material Staging Submenu (Simulate & Execute) */}
+                            {showWmStagingSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '160px', padding: '4px 0'
+                              }}>
+                                {/* Simulate */}
+                                {(order.status || '').split(' ').some((st: string) => ['CRTD', 'REL', 'STRT', 'PCNF', 'CNF', 'INSP'].includes(st)) ? (
+                                  <div
+                                    className="sap-menu-item"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      stageWmMaterialMutation.mutate({ isSimulation: true });
+                                    }}
+                                  >
+                                    Simulate
+                                  </div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Simulate</div>
+                                )}
+
+                                {/* Execute */}
+                                {(order.status || '').split(' ').some((st: string) => ['CRTD', 'REL', 'STRT', 'PCNF', 'CNF', 'INSP'].includes(st)) ? (
+                                  <div
+                                    className="sap-menu-item"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      stageWmMaterialMutation.mutate({ isSimulation: false });
+                                    }}
+                                  >
+                                    Execute
+                                  </div>
+                                ) : (
+                                  <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Execute</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Inspection Lot</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Split Order</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Deallocate</div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="sap-menu-item" style={{ color: '#64748b' }}>Edit</div>
+
+                    {/* Goto (Hover/Click Submenu Trigger) */}
+                    <div
+                      className={`sap-menu-item ${showGotoSubmenu ? 'active' : ''}`}
+                      onMouseEnter={() => setShowGotoSubmenu(true)}
+                      onMouseLeave={() => { setShowGotoSubmenu(false); setShowCostsSubmenu(false); }}
+                      onClick={() => setShowGotoSubmenu(!showGotoSubmenu)}
+                      style={{ position: 'relative' }}
+                    >
+                      <span>Goto</span>
+                      <span>▸</span>
+
+                      {/* Level 2: Goto Submenu */}
+                      {showGotoSubmenu && (
+                        <div style={{
+                          position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                          backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10000, minWidth: '220px', padding: '4px 0'
+                        }}>
+                          <div style={{ padding: '6px 12px', color: '#1e293b', cursor: 'pointer' }} onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>Header (Shift+F6)</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Collective Order</div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Overviews</div>
+
+                          {/* Costs Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showCostsSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowCostsSubmenu(true)}
+                            onMouseLeave={() => setShowCostsSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowCostsSubmenu(!showCostsSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>Costs</span>
+                            <span>▸</span>
+
+                            {/* Level 3: Costs Submenu (Analysis, Itemization, Cost Component Split, Balance) */}
+                            {showCostsSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '200px', padding: '4px 0'
+                              }}>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Analysis
+                                </div>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchCostViewMutation.mutate({ actionName: 'getCostItemization', title: `Cost Itemization — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Itemization
+                                </div>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchCostViewMutation.mutate({ actionName: 'getCostComponentSplit', title: `Cost Component Split — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Cost Component Split
+                                </div>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchCostViewMutation.mutate({ actionName: 'getCostBalance', title: `Cost Balance — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Balance
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Missing Parts Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showMissingPartsSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowMissingPartsSubmenu(true)}
+                            onMouseLeave={() => setShowMissingPartsSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowMissingPartsSubmenu(!showMissingPartsSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>Missing Parts</span>
+                            <span>▸</span>
+
+                            {/* Level 3: Missing Parts Submenu (Missing Parts Overview & Missing Parts List) */}
+                            {showMissingPartsSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '200px', padding: '4px 0'
+                              }}>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchMissingPartsMutation.mutate({ actionName: 'getMissingPartsOverview', title: `Missing Parts Overview — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Missing Parts Overview
+                                </div>
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchMissingPartsMutation.mutate({ actionName: 'getMissingParts', title: `Missing Parts List — Production Order ${order.orderNumber}` });
+                                  }}
+                                >
+                                  Missing Parts List
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div
+                            className="sap-menu-item"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fetchGoodsMovementsMutation.mutate();
+                            }}
+                          >
+                            Documented Goods Movements
+                          </div>
+                          <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Graphic</div>
+
+                          {/* Logs Submenu Trigger */}
+                          <div
+                            className={`sap-menu-item ${showLogsSubmenu ? 'active' : ''}`}
+                            onMouseEnter={() => setShowLogsSubmenu(true)}
+                            onMouseLeave={() => setShowLogsSubmenu(false)}
+                            onClick={(e) => { e.stopPropagation(); setShowLogsSubmenu(!showLogsSubmenu); }}
+                            style={{ position: 'relative', fontWeight: 600 }}
+                          >
+                            <span>Logs</span>
+                            <span>▸</span>
+
+                            {/* Level 3: Logs Submenu (10 Ordered SAP items) */}
+                            {showLogsSubmenu && (
+                              <div style={{
+                                position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                                backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10001, minWidth: '220px', padding: '4px 0'
+                              }}>
+                                {/* 1. Overview */}
+                                <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Overview</div>
+
+                                {/* 2. Scheduling */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowScheduleModal(true);
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Scheduling
+                                </div>
+
+                                {/* 3. Release */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    releaseOrderMutation.mutate();
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Release
+                                </div>
+
+                                {/* 4. Deletion Flag */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    restrictActionMutation.mutate({ actionName: 'setDeletionFlagOrder' });
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Deletion Flag
+                                </div>
+
+                                {/* 5. WM Material Staging */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    stageWmMaterialMutation.mutate({ isSimulation: false });
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  WM Material Staging
+                                </div>
+
+                                {/* 6. Read PP Master Data (Integrated existing functionality) */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setModalErrorMsg('');
+                                    setShowReadMasterModal(true);
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Read PP Master Data
+                                </div>
+
+                                {/* 7. Material Availability */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    checkMaterialMutation.mutate();
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Material Availability
+                                </div>
+
+                                {/* 8. PRT Availability */}
+                                <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>PRT Availability</div>
+
+                                {/* 9. Cost Calculation */}
+                                <div
+                                  className="sap-menu-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` });
+                                    setShowSapMenuDropdown(false);
+                                  }}
+                                >
+                                  Cost Calculation
+                                </div>
+
+                                {/* 10. Serial Numbers */}
+                                <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Serial Numbers</div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ borderTop: '1px solid #f1f5f9', margin: '4px 0' }}></div>
+                          <div className="sap-menu-item" onClick={() => navigate('/orders')}>Back (F3)</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Operation (Hover/Click Submenu Trigger) */}
+                    <div
+                      className={`sap-menu-item ${showOperationSubmenu ? 'active' : ''}`}
+                      onMouseEnter={() => setShowOperationSubmenu(true)}
+                      onMouseLeave={() => setShowOperationSubmenu(false)}
+                      onClick={() => setShowOperationSubmenu(!showOperationSubmenu)}
+                      style={{ position: 'relative' }}
+                    >
+                      <span>Operation</span>
+                      <span>▸</span>
+
+                      {/* Level 2: Operation Submenu (12 Ordered SAP Items) */}
+                      {showOperationSubmenu && (
+                        <div style={{
+                          position: 'absolute', top: 0, left: '100%', marginLeft: '2px',
+                          backgroundColor: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '4px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', zIndex: 10000, minWidth: '260px', padding: '4px 0'
+                        }}>
+                          {/* 1. Operation Details (F7) */}
+                          <div
+                            className="sap-menu-item"
+                            style={{ display: 'flex', justifyContent: 'space-between' }}
+                            onClick={() => {
+                              setShowSapMenuDropdown(false);
+                              const el = document.getElementById('operations-section');
+                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }}
+                          >
+                            <span>Operation Details</span>
+                            <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>F7</span>
+                          </div>
+
+                          {/* 2. Purchase Requisition */}
+                          <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Purchase Requisition</div>
+
+                          {/* 3. Object Dependency... */}
+                          <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Object Dependency...</div>
+
+                          {/* 4. Release */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              releaseOrderMutation.mutate();
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Release
+                          </div>
+
+                          {/* 5. Status (Ctrl+F5) */}
+                          <div
+                            className="sap-menu-item"
+                            style={{ display: 'flex', justifyContent: 'space-between' }}
+                            onClick={() => {
+                              setShowStatusChangesModal(true);
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            <span>Status</span>
+                            <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Ctrl+F5</span>
+                          </div>
+
+                          {/* 6. Long Text (F9) */}
+                          <div
+                            className="sap-menu-item"
+                            style={{ display: 'flex', justifyContent: 'space-between' }}
+                            onClick={() => {
+                              setShowApiNotice(`Long Text for Order ${order.orderNumber}: ${order.longText || 'No long text entered.'}`);
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            <span>Long Text</span>
+                            <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>F9</span>
+                          </div>
+
+                          {/* 7. Unplanned Inspection Characteristics */}
+                          <div style={{ padding: '6px 12px', color: '#cbd5e1', fontSize: '0.8rem', cursor: 'not-allowed' }}>Unplanned Inspection Characteristics</div>
+
+                          {/* 8. Cumulate Standard Values */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              setSuccessMsg('Cumulated standard values calculated from active SAP routing operations.');
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Cumulate Standard Values
+                          </div>
+
+                          {/* 9. Activate Purchase Requisition/Reserv. */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              setSuccessMsg('Activated component reservations in SAP S/4HANA Public Cloud.');
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Activate Purchase Requisition/Reserv.
+                          </div>
+
+                          {/* 10. Display Confirmations */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              setShowApiNotice(`Confirmed Yield: ${parseFloat(order.confirmedQty || 0).toFixed(0)} PC across ${order.operations?.length || 0} routing operations.`);
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Display Confirmations
+                          </div>
+
+                          {/* 11. Dispatch */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              setSuccessMsg(`Dispatched operations for Order ${order.orderNumber} to active work centers.`);
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Dispatch
+                          </div>
+
+                          {/* 12. Deallocate */}
+                          <div
+                            className="sap-menu-item"
+                            onClick={() => {
+                              setSuccessMsg(`Deallocated operation scheduling locks for Order ${order.orderNumber}.`);
+                              setShowSapMenuDropdown(false);
+                            }}
+                          >
+                            Deallocate
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="sap-menu-item" style={{ color: '#64748b' }}>System</div>
+                    <div className="sap-menu-item" style={{ color: '#64748b' }}>Help</div>
+                  </div>
+                )}
+              </div>
+
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` })}>Cost Order</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('SAP Public Cloud requires active production version or BOM explosion for structural component additions.')}>Components</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('Operations are determined by SAP routing master data.')}>Operations</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.25rem', fontSize: '0.85rem' }}>
               <div>
@@ -620,10 +1531,43 @@ export const ProductionOrderDetail: React.FC = () => {
                   </div>
                 )}
                 {activeHeaderTab === 'control' && (
-                  <div style={{ display: 'flex', gap: '2rem' }}>
-                    <div><strong>Order Type:</strong> {order.orderType}</div>
-                    <div><strong>Plant Code:</strong> {order.plant?.code}</div>
-                    <div><strong>SAP Synced:</strong> {order.isSapSynced ? 'Yes' : 'No'}</div>
+                  <div>
+                    <div style={{ display: 'flex', gap: '2rem', marginBottom: '1rem' }}>
+                      <div><strong>Order Type:</strong> {order.orderType}</div>
+                      <div><strong>Plant Code:</strong> {order.plant?.code}</div>
+                      <div><strong>SAP Synced:</strong> {order.isSapSynced ? 'Yes' : 'No'}</div>
+                    </div>
+
+                    {/* SAP System Statuses Table (Matching Image 36) */}
+                    <div style={{ border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#ffffff', maxWidth: '480px', overflow: 'hidden' }}>
+                      <div style={{ backgroundColor: '#f1f5f9', padding: '6px 12px', fontWeight: 700, fontSize: '0.82rem', borderBottom: '1px solid #cbd5e1', color: '#1e293b' }}>
+                        Syst. Status
+                      </div>
+                      <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                            <th style={{ width: '30px', textAlign: 'center' }}>X</th>
+                            <th style={{ width: '80px' }}>Status</th>
+                            <th>Text</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {['CRTD', 'MSPT', 'BCRQ', 'MANC', 'NTUP', 'SETC'].map((statusCode) => {
+                            const activeTokens = (order.status || '').split(' ');
+                            const isPresent = activeTokens.includes(statusCode);
+                            return (
+                              <tr key={statusCode}>
+                                <td style={{ textAlign: 'center' }}>
+                                  <input type="checkbox" checked={isPresent} readOnly style={{ accentColor: '#0a6ed1' }} />
+                                </td>
+                                <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{statusCode}</td>
+                                <td style={{ color: '#1e293b' }}>{SAP_SYSTEM_STATUS_MAP[statusCode]}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
                 {activeHeaderTab === 'masterData' && (
@@ -660,11 +1604,8 @@ export const ProductionOrderDetail: React.FC = () => {
           <button 
             className="sap-btn" 
             style={{ width: '100%', backgroundColor: '#5c7cfa', color: '#ffffff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600 }}
-            onClick={() => {
-              calculateCostsMutation.mutate();
-              setShowCostsModal(true);
-            }}
-            disabled={calculateCostsMutation.isPending}
+            onClick={() => fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` })}
+            disabled={fetchCostViewMutation.isPending}
           >
             <DollarSign size={16} />
             <span>{calculateCostsMutation.isPending ? 'Calculating Costs...' : 'Cost Order (Goto -> Costs)'}</span>
@@ -818,43 +1759,113 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       )}
 
-      {/* Routing Operations */}
+      {/* Routing Operations — Operation Overview */}
       <div className="sap-card" style={{ marginBottom: '2rem' }}>
-        <div className="sap-card-header">
-          <h3 className="sap-card-title">Routing & Sequence Operations</h3>
+        <div className="sap-card-header" style={{ justifyContent: 'space-between' }}>
+          <h3 className="sap-card-title">Routing & Sequence Operations (Operation Overview)</h3>
+          {isChangeMode && (
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem' }}
+              onClick={() => setShowApiNotice('SAP Public Cloud OData V2 API API_PRODUCTION_ORDER_2_SRV restricts creating new operations directly. Operations are generated by SAP master data routing explosion.')}
+            >
+              + Add Operation (SAP Info)
+            </button>
+          )}
         </div>
         <div className="sap-table-container">
           <table className="sap-table">
             <thead>
               <tr>
-                <th>Seq No</th>
-                <th>Operation Description</th>
-                <th>Work Center</th>
+                <th style={{ width: '60px' }}>Op</th>
+                <th style={{ width: '50px' }}>SOp</th>
+                <th>Operation Short Text</th>
+                <th style={{ width: '130px' }}>Work Center</th>
                 <th>Std Time</th>
                 <th>Spent Time</th>
                 <th>Yield Qty</th>
-                <th>Scrap Qty</th>
                 <th>Status</th>
+                {isChangeMode && <th style={{ width: '100px' }}>Action</th>}
               </tr>
             </thead>
             <tbody>
               {order.operations?.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No routing operations defined.</td>
+                  <td colSpan={isChangeMode ? 9 : 8} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No routing operations defined.</td>
                 </tr>
               ) : (
                 order.operations?.map((op: any) => (
                   <tr key={op.ID}>
-                    <td>{op.sequence}</td>
-                    <td style={{ fontWeight: 500 }}>{op.description}</td>
-                    <td>{op.workCenter?.name || op.workCenter_ID}</td>
+                    <td style={{ fontWeight: 600, color: '#0a6ed1' }}>{String(op.sequence || 10).padStart(4, '0')}</td>
+                    <td style={{ color: '#94a3b8' }}>------</td>
+                    <td>
+                      {isChangeMode && editingOpId === op.ID ? (
+                        <input
+                          type="text"
+                          className="sap-input"
+                          value={editingOpDesc}
+                          onChange={(e) => setEditingOpDesc(e.target.value)}
+                          style={{ padding: '2px 6px', fontSize: '0.85rem' }}
+                        />
+                      ) : (
+                        <span style={{ fontWeight: 500 }}>{op.description}</span>
+                      )}
+                    </td>
+                    <td>
+                      {isChangeMode && editingOpId === op.ID ? (
+                        <input
+                          type="text"
+                          className="sap-input"
+                          value={editingOpWc}
+                          onChange={(e) => setEditingOpWc(e.target.value)}
+                          placeholder="e.g. CHCLRM01"
+                          style={{ padding: '2px 6px', fontSize: '0.85rem' }}
+                        />
+                      ) : (
+                        <span>{op.workCenter?.code || op.workCenter?.name || op.workCenter_ID || '-'}</span>
+                      )}
+                    </td>
                     <td>{parseFloat(op.standardTime).toFixed(0)} {op.timeUnit}</td>
                     <td>{parseFloat(op.confirmedTime).toFixed(0)} {op.timeUnit}</td>
                     <td style={{ color: '#2b7c2b', fontWeight: 600 }}>{parseFloat(op.yieldQty).toFixed(0)} PC</td>
-                    <td style={{ color: '#bb0000' }}>{parseFloat(op.scrapQty).toFixed(0)} PC</td>
                     <td>
                       <span className={`sap-badge sap-badge-${op.status}`}>{op.status}</span>
                     </td>
+                    {isChangeMode && (
+                      <td>
+                        {editingOpId === op.ID ? (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              className="sap-btn"
+                              style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => updateOpMutation.mutate({ opId: op.ID, description: editingOpDesc, workCenterCode: editingOpWc })}
+                              disabled={updateOpMutation.isPending}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="sap-btn"
+                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => setEditingOpId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="sap-btn sap-btn-secondary"
+                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                            onClick={() => {
+                              setEditingOpId(op.ID);
+                              setEditingOpDesc(op.description);
+                              setEditingOpWc(op.workCenter?.code || '');
+                            }}
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -863,33 +1874,57 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* BOM Components and ATP check status */}
+      {/* BOM Components — Component Overview */}
       <div className="sap-card" style={{ marginBottom: '2rem' }}>
-        <div className="sap-card-header">
-          <h3 className="sap-card-title">Bill of Materials (BOM) Requirements & Availability</h3>
+        <div className="sap-card-header" style={{ justifyContent: 'space-between' }}>
+          <h3 className="sap-card-title">Bill of Materials (Component Overview)</h3>
+          {isChangeMode && (
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem' }}
+              onClick={() => setShowApiNotice('SAP Public Cloud API V2 generates components via BOM explosion or PP Master Data Re-read (Read PP Master Data). Direct component creation requires a master data re-read.')}
+            >
+              + Add Component (SAP Info)
+            </button>
+          )}
         </div>
         <div className="sap-table-container">
           <table className="sap-table">
             <thead>
               <tr>
+                <th style={{ width: '60px' }}>Item</th>
                 <th>Component Code</th>
                 <th>Description</th>
-                <th>Required Qty</th>
+                <th style={{ width: '120px' }}>Required Qty</th>
                 <th>Issued Qty</th>
                 <th>Status</th>
+                {isChangeMode && <th style={{ width: '120px' }}>Action</th>}
               </tr>
             </thead>
             <tbody>
               {order.components?.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
+                  <td colSpan={isChangeMode ? 7 : 6} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
                 </tr>
               ) : (
-                order.components?.map((c: any) => (
+                order.components?.map((c: any, idx: number) => (
                   <tr key={c.ID}>
-                    <td style={{ fontWeight: 600 }}>{c.componentMaterial?.code}</td>
+                    <td style={{ fontWeight: 600, color: '#475569' }}>{String((idx + 1) * 10).padStart(4, '0')}</td>
+                    <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{c.componentMaterial?.code}</td>
                     <td>{c.componentMaterial?.description}</td>
-                    <td>{parseFloat(c.requiredQty).toFixed(0)} {c.unit}</td>
+                    <td>
+                      {isChangeMode && editingCompId === c.ID ? (
+                        <input
+                          type="number"
+                          className="sap-input"
+                          value={editingCompQty}
+                          onChange={(e) => setEditingCompQty(e.target.value)}
+                          style={{ padding: '2px 6px', fontSize: '0.85rem', width: '80px' }}
+                        />
+                      ) : (
+                        <span style={{ fontWeight: 600 }}>{parseFloat(c.requiredQty).toFixed(0)} {c.unit}</span>
+                      )}
+                    </td>
                     <td>{parseFloat(c.issuedQty).toFixed(0)} {c.unit}</td>
                     <td>
                       <span style={{
@@ -907,6 +1942,54 @@ export const ProductionOrderDetail: React.FC = () => {
                         <span>{c.status === 'RESV' ? 'Reserved' : c.status === 'MSPT' ? 'Material Shortage' : 'Issued'}</span>
                       </span>
                     </td>
+                    {isChangeMode && (
+                      <td>
+                        {editingCompId === c.ID ? (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              className="sap-btn"
+                              style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => updateCompMutation.mutate({ compId: c.ID, requiredQty: parseFloat(editingCompQty) })}
+                              disabled={updateCompMutation.isPending}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="sap-btn"
+                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => setEditingCompId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              className="sap-btn sap-btn-secondary"
+                              style={{ padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => {
+                                setEditingCompId(c.ID);
+                                setEditingCompQty(c.requiredQty);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="sap-btn"
+                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                              onClick={() => {
+                                if (confirm(`Are you sure you want to delete component ${c.componentMaterial?.code} from SAP S/4HANA?`)) {
+                                  deleteCompMutation.mutate(c.ID);
+                                }
+                              }}
+                              disabled={deleteCompMutation.isPending}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -1617,6 +2700,319 @@ export const ProductionOrderDetail: React.FC = () => {
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button className="sap-btn sap-btn-secondary" onClick={() => setShowBatchModal(false)}>Cancel</button>
               <button className="sap-btn sap-btn-primary" onClick={() => createBatchMutation.mutate()} disabled={createBatchMutation.isPending}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAP Output Management Reprint Dialog */}
+      {showReprintModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '450px', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <h3 style={{ marginTop: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>SAP Output Management — Reprint</h3>
+            <p style={{ fontSize: '0.85rem', color: '#475569' }}>
+              Select Output Document Type to reprint for Production Order <strong>{order.orderNumber}</strong>:
+            </p>
+            <div className="sap-form-group" style={{ marginBottom: '1.25rem' }}>
+              <label className="sap-label">Output Type</label>
+              <select className="sap-input" value={selectedReprintType} onChange={(e) => setSelectedReprintType(e.target.value)}>
+                <option value="PP_PRT">PP_PRT - Production Order Print Paper</option>
+                <option value="PP_SHOP">PP_SHOP - Shop Floor Routing Paper</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowReprintModal(false)}>Cancel</button>
+              <button
+                className="sap-btn sap-btn-primary"
+                onClick={() => reprintOutputMutation.mutate(selectedReprintType)}
+                disabled={reprintOutputMutation.isPending}
+              >
+                {reprintOutputMutation.isPending ? 'Scheduling Reprint...' : 'Execute Reprint'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showApiNotice && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '450px', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <h3 style={{ marginTop: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>SAP S/4HANA Public Cloud Feature Note</h3>
+            <p style={{ fontSize: '0.85rem', color: '#475569', lineHeight: 1.5 }}>{showApiNotice}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setShowApiNotice(null)}>Understand & Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAP Cost View Modal (Goto -> Costs) */}
+      {costModalTitle && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '650px', maxHeight: '80vh', overflowY: 'auto', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>{costModalTitle}</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setCostModalTitle(null)}>✕</button>
+            </div>
+
+            {/* Analysis View */}
+            {costModalTitle.includes('Analysis') && costModalContent && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Planned Total Cost</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0a6ed1' }}>₹{parseFloat(costModalContent.plannedTotalCost).toLocaleString()} {costModalContent.currency}</div>
+                </div>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Actual Total Cost</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#2b7c2b' }}>₹{parseFloat(costModalContent.actualTotalCost).toLocaleString()} {costModalContent.currency}</div>
+                </div>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Target Total Cost</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>₹{parseFloat(costModalContent.targetTotalCost).toLocaleString()} {costModalContent.currency}</div>
+                </div>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Cost Variance</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: costModalContent.variance > 0 ? '#bb0000' : '#2b7c2b' }}>₹{parseFloat(costModalContent.variance).toLocaleString()} {costModalContent.currency}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Itemization View */}
+            {costModalTitle.includes('Itemization') && Array.isArray(costModalContent) && (
+              <div className="sap-table-container">
+                <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Cat</th>
+                      <th>Resource</th>
+                      <th>Description</th>
+                      <th>Planned Qty</th>
+                      <th>Actual Qty</th>
+                      <th>Planned Cost</th>
+                      <th>Actual Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costModalContent.map((row: any, idx: number) => (
+                      <tr key={idx}>
+                        <td style={{ fontWeight: 700 }}>{row.itemCategory}</td>
+                        <td style={{ color: '#0a6ed1', fontWeight: 600 }}>{row.resource}</td>
+                        <td>{row.description}</td>
+                        <td>{row.plannedQty} {row.unit}</td>
+                        <td>{row.actualQty} {row.unit}</td>
+                        <td>₹{parseFloat(row.plannedCost).toLocaleString()}</td>
+                        <td>₹{parseFloat(row.actualCost).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Cost Component Split View */}
+            {costModalTitle.includes('Component Split') && Array.isArray(costModalContent) && (
+              <div className="sap-table-container">
+                <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Component</th>
+                      <th>Description</th>
+                      <th>Planned Cost</th>
+                      <th>Actual Cost</th>
+                      <th>Share (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costModalContent.map((row: any, idx: number) => (
+                      <tr key={idx}>
+                        <td style={{ fontWeight: 700, color: '#475569' }}>{row.costComponent}</td>
+                        <td style={{ fontWeight: 600 }}>{row.description}</td>
+                        <td>₹{parseFloat(row.plannedCost).toLocaleString()}</td>
+                        <td>₹{parseFloat(row.actualCost).toLocaleString()}</td>
+                        <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.percentage}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Balance View */}
+            {costModalTitle.includes('Balance') && costModalContent && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Total Debits</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#bb0000' }}>₹{parseFloat(costModalContent.totalDebits).toLocaleString()}</div>
+                </div>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Total Credits</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#2b7c2b' }}>₹{parseFloat(costModalContent.totalCredits).toLocaleString()}</div>
+                </div>
+                <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                  <div style={{ color: '#64748b' }}>Open Balance</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#0a6ed1' }}>₹{parseFloat(costModalContent.balance).toLocaleString()}</div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setCostModalTitle(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAP Missing Parts View Modal (Goto -> Missing Parts) */}
+      {missingPartsModalTitle && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '700px', maxHeight: '80vh', overflowY: 'auto', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>{missingPartsModalTitle}</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setMissingPartsModalTitle(null)}>✕</button>
+            </div>
+
+            {/* Missing Parts Overview View */}
+            {missingPartsModalTitle.includes('Overview') && missingPartsData && (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                    <div style={{ color: '#64748b' }}>Total Components</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1e293b' }}>{missingPartsData.totalComponents}</div>
+                  </div>
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                    <div style={{ color: '#64748b' }}>Missing / Shortage</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: missingPartsData.shortageCount > 0 ? '#bb0000' : '#2b7c2b' }}>{missingPartsData.shortageCount}</div>
+                  </div>
+                  <div style={{ padding: '0.75rem', backgroundColor: '#f8fafc', borderRadius: '4px' }}>
+                    <div style={{ color: '#64748b' }}>Status</div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: missingPartsData.shortageCount > 0 ? '#bb0000' : '#2b7c2b' }}>{missingPartsData.overallStatus}</div>
+                  </div>
+                </div>
+
+                {missingPartsData.missingComponents?.length === 0 ? (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: '#f8fafc', color: '#2b7c2b', fontWeight: 600, borderRadius: '4px' }}>
+                    ✔ No missing parts found for Production Order {missingPartsData.orderNumber}.
+                  </div>
+                ) : (
+                  <div className="sap-table-container">
+                    <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Material Code</th>
+                          <th>Description</th>
+                          <th>Shortage Quantity</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {missingPartsData.missingComponents?.map((row: any, idx: number) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.material}</td>
+                            <td>{row.description}</td>
+                            <td style={{ fontWeight: 700, color: '#bb0000' }}>{row.shortageQty} {row.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Missing Parts List View */}
+            {missingPartsModalTitle.includes('List') && Array.isArray(missingPartsData) && (
+              <div>
+                {missingPartsData.length === 0 ? (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', backgroundColor: '#f8fafc', color: '#2b7c2b', fontWeight: 600, borderRadius: '4px' }}>
+                    ✔ No missing parts found for this Production Order.
+                  </div>
+                ) : (
+                  <div className="sap-table-container">
+                    <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Material Code</th>
+                          <th>Description</th>
+                          <th>Required Qty</th>
+                          <th>Available Qty</th>
+                          <th>Shortage Qty</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {missingPartsData.map((row: any, idx: number) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.material}</td>
+                            <td>{row.description}</td>
+                            <td>{row.requiredQty} {row.unit}</td>
+                            <td>{row.availableQty} {row.unit}</td>
+                            <td style={{ fontWeight: 700, color: '#bb0000' }}>{row.shortageQty} {row.unit}</td>
+                            <td><span className="sap-badge sap-badge-CRTD">{row.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setMissingPartsModalTitle(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SAP Documented Goods Movements Modal (Goto -> Documented Goods Movements) */}
+      {showGoodsMovementsModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '850px', maxHeight: '80vh', overflowY: 'auto', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>Documented Goods Movements — Order {order.orderNumber}</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setShowGoodsMovementsModal(false)}>✕</button>
+            </div>
+
+            {(!goodsMovementsData || goodsMovementsData.length === 0) ? (
+              <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: '#f8fafc', color: '#64748b', borderRadius: '4px' }}>
+                No documented goods movements found for this Production Order.
+              </div>
+            ) : (
+              <div className="sap-table-container">
+                <table className="sap-table" style={{ fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Doc Number</th>
+                      <th>Item</th>
+                      <th>Mvt Type</th>
+                      <th>Material</th>
+                      <th>Description</th>
+                      <th>Quantity</th>
+                      <th>Posting Date</th>
+                      <th>Plant</th>
+                      <th>SLoc</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {goodsMovementsData.map((row: any, idx: number) => (
+                      <tr key={idx}>
+                        <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.docNumber}</td>
+                        <td>{row.item}</td>
+                        <td style={{ fontWeight: 700 }}>{row.movementType}</td>
+                        <td style={{ fontWeight: 600 }}>{row.material}</td>
+                        <td>{row.description}</td>
+                        <td style={{ fontWeight: 700 }}>{row.quantity} {row.unit}</td>
+                        <td>{row.postingDate}</td>
+                        <td>{row.plant}</td>
+                        <td>{row.storageLocation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setShowGoodsMovementsModal(false)}>Close</button>
             </div>
           </div>
         </div>

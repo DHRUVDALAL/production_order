@@ -147,6 +147,32 @@ service ProductionService {
         status        : String;
     };
 
+    action getMissingPartsOverview(orderId: UUID) returns {
+        orderNumber      : String;
+        totalComponents  : Integer;
+        shortageCount    : Integer;
+        overallStatus    : String;
+        missingComponents : array of {
+            material    : String;
+            description : String;
+            shortageQty : Decimal(15,3);
+            unit        : String;
+        };
+    };
+
+    action getDocumentedGoodsMovements(orderId: UUID) returns array of {
+        docNumber       : String;
+        item            : String;
+        movementType    : String;
+        material        : String;
+        description     : String;
+        quantity        : Decimal(15,3);
+        unit            : String;
+        postingDate     : String;
+        plant           : String;
+        storageLocation : String;
+    };
+
     // Create Batch
     action createBatch(
         orderId  : UUID,
@@ -190,9 +216,120 @@ service ProductionService {
         status    : String;
     };
 
-    // Technically Complete Order
+    // Technically Complete Order & Restrict Processing Actions
     action technicallyCompleteOrder(orderId: UUID) returns { success: Boolean; status: String; };
-
-    // Close Order
+    action revokeTechnicalCompletionOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action closeOrder(orderId: UUID) returns { success: Boolean; status: String; };
+    action revokeCloseOrder(orderId: UUID) returns { success: Boolean; status: String; };
+    action lockProductionOrder(orderId: UUID) returns { success: Boolean; status: String; };
+    action unlockProductionOrder(orderId: UUID) returns { success: Boolean; status: String; };
+    action setDeletionFlagOrder(orderId: UUID) returns { success: Boolean; status: String; };
+    action revokeDeletionFlagOrder(orderId: UUID) returns { success: Boolean; status: String; };
+
+    // WM Material Staging Action
+    action stageWmMaterial(orderId: UUID, isSimulation: Boolean) returns { success: Boolean; message: String; details: String; };
+
+    // SAP Cost Views Actions (Goto -> Costs)
+    action getCostAnalysis(orderId: UUID) returns {
+        orderNumber      : String;
+        plannedTotalCost : Decimal(15,2);
+        actualTotalCost  : Decimal(15,2);
+        targetTotalCost  : Decimal(15,2);
+        variance         : Decimal(15,2);
+        currency         : String;
+    };
+
+    action getCostItemization(orderId: UUID) returns array of {
+        itemCategory : String;
+        resource     : String;
+        description  : String;
+        plannedQty   : Decimal(15,3);
+        actualQty    : Decimal(15,3);
+        unit         : String;
+        plannedCost  : Decimal(15,2);
+        actualCost   : Decimal(15,2);
+    };
+
+    action getCostComponentSplit(orderId: UUID) returns array of {
+        costComponent : String;
+        description   : String;
+        plannedCost   : Decimal(15,2);
+        actualCost    : Decimal(15,2);
+        percentage    : Decimal(5,2);
+    };
+
+    action getCostBalance(orderId: UUID) returns {
+        totalDebits  : Decimal(15,2);
+        totalCredits : Decimal(15,2);
+        balance      : Decimal(15,2);
+        currency     : String;
+        status       : String;
+    };
+
+    // Copy From Order — Reference Lookup & SAP Search Value Help
+    action getProductionOrderReference(orderNumber: String) returns {
+        success              : Boolean;
+        orderNumber          : String;
+        materialId           : UUID;
+        materialCode         : String;
+        materialDescription  : String;
+        plantId              : UUID;
+        plantCode            : String;
+        storageLocationId    : UUID;
+        storageLocationCode  : String;
+        orderType            : String;
+        targetQty            : Decimal(15,3);
+        productionUnit       : String;
+        plannedStartDate     : String;
+        plannedEndDate       : String;
+        status               : String;
+        components           : array of {
+            itemNumber               : String;
+            componentMaterialCode    : String;
+            componentDescription     : String;
+            requiredQty              : Decimal(15,3);
+            unit                     : String;
+            itemCategory             : String;
+            operationSequence        : String;
+            sequence                 : String;
+            plantCode                : String;
+            storageLocationCode      : String;
+            batchNumber              : String;
+            isBackflushed            : Boolean;
+        };
+    };
+
+    action searchProductionOrders(searchTerm: String, plantCode: String) returns array of {
+        orderNumber          : String;
+        materialCode         : String;
+        materialDescription  : String;
+        plantCode            : String;
+        orderType            : String;
+        targetQty            : Decimal(15,3);
+        productionUnit       : String;
+        plannedStartDate     : String;
+        plannedEndDate       : String;
+        status               : String;
+    };
+
+    // SAP Change Order Actions
+    action updateProductionOrderOperation(
+        orderId        : UUID,
+        operationId    : UUID,
+        description    : String,
+        workCenterCode : String
+    ) returns { success: Boolean; message: String; };
+
+    action updateProductionOrderComponent(
+        orderId             : UUID,
+        componentId         : UUID,
+        requiredQty         : Decimal(15,3),
+        storageLocationCode : String
+    ) returns { success: Boolean; message: String; };
+
+    action deleteProductionOrderComponent(
+        orderId     : UUID,
+        componentId : UUID
+    ) returns { success: Boolean; message: String; };
 }
+

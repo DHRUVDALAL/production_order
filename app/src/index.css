@@ -281,3 +281,26 @@ body {
 .sap-table tr:hover td {
   background-color: #f8f9fa;
 }
+
+/* SAP Cascading Menu Item Styles */
+.sap-menu-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #1e293b;
+  font-weight: 500;
+  font-size: 0.8rem;
+  background-color: transparent;
+  transition: background-color 0.1s ease, color 0.1s ease;
+  user-select: none;
+}
+
+.sap-menu-item:hover,
+.sap-menu-item.active {
+  background-color: #e8f4fd !important;
+  color: #0a6ed1 !important;
+  font-weight: 600;
+}
+

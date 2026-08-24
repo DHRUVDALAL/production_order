@@ -21,6 +21,7 @@ export const ShellBar: React.FC = () => {
     { label: 'Production Orders', path: '/orders', roles: ['SYS_ADMIN', 'PROD_PLANNER', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR'], icon: <ClipboardList size={16} /> },
     { label: 'Confirm Operations', path: '/operations', roles: ['SYS_ADMIN', 'PROD_OPERATOR', 'PLANT_SUPV'], icon: <Wrench size={16} /> },
     { label: 'Quality Control', path: '/quality', roles: ['SYS_ADMIN', 'QUAL_INSPECTOR', 'PLANT_SUPV'], icon: <ShieldAlert size={16} /> },
+    { label: 'Goods Movement', path: '/goods-issue', roles: ['SYS_ADMIN', 'PURCHASER'], icon: <PackageCheck size={16} /> },
     { label: 'Stock & Inventory', path: '/inventory', roles: ['SYS_ADMIN', 'INV_MANAGER', 'PLANT_SUPV', 'PLANT_MGR'], icon: <PackageCheck size={16} /> },
     { label: 'Administration', path: '/admin', roles: ['SYS_ADMIN'], icon: <Settings size={16} /> },
   ];

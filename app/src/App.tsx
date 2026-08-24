@@ -18,6 +18,7 @@ import { StatusChangesPage } from './pages/StatusChangesPage';
 import { ChangeManagementPage } from './pages/ChangeManagementPage';
 import { StockRequirementsPage } from './pages/StockRequirementsPage';
 import { OutputManagementPage } from './pages/OutputManagementPage';
+import { GoodsIssuePage } from './pages/GoodsIssuePage';
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -80,6 +81,18 @@ function App() {
             <Route path="/orders/:id/outputs" element={
               <RouteGuard allowedRoles={['SYS_ADMIN', 'PROD_PLANNER', 'PLANT_SUPV', 'PLANT_MGR']}>
                 <AppLayout><OutputManagementPage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/goods-issue" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PURCHASER']}>
+                <AppLayout><GoodsIssuePage /></AppLayout>
+              </RouteGuard>
+            } />
+
+            <Route path="/orders/:id/goods-issue" element={
+              <RouteGuard allowedRoles={['SYS_ADMIN', 'PURCHASER']}>
+                <AppLayout><GoodsIssuePage /></AppLayout>
               </RouteGuard>
             } />
 

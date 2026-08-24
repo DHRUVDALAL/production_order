@@ -37,6 +37,60 @@ service ProductionService {
     entity BatchNumbers as projection on portal.BatchNumbers;
     entity OutputItems as projection on portal.OutputItems;
     entity SchedulingMargins as projection on portal.SchedulingMargins;
+    entity PurchaseOrders as projection on portal.PurchaseOrders;
+    entity PurchaseOrderItems as projection on portal.PurchaseOrderItems;
+    entity Reservations as projection on portal.Reservations;
+    entity ReservationItems as projection on portal.ReservationItems;
+
+    type GoodsMovementItemParam {
+        line            : Integer;
+        componentId     : UUID;
+        poItemId        : UUID;
+        resItemId       : UUID;
+        materialCode    : String;
+        plantCode       : String;
+        slocCode        : String;
+        quantity        : Decimal(15, 3);
+        unit            : String;
+        batchNumber     : String;
+        stockType       : String;
+        movementType    : String;
+        finalIssue      : Boolean;
+    };
+
+    action checkGoodsMovement(
+        actionType      : String, // 'A07', 'A01', 'A03', 'A04'
+        refType         : String, // 'R08', 'R01', 'R02', 'R09', 'R10'
+        docNumber       : String, // orderNumber, poNumber, matDocNumber, reservationNumber
+        docYear         : String,
+        postingDate     : Date,
+        documentDate    : Date,
+        headerText      : String,
+        materialSlip    : String,
+        grGiSlipNo      : String,
+        items           : array of GoodsMovementItemParam
+    ) returns { success: Boolean; message: String; errors: array of String; };
+
+    action postGoodsMovement(
+        actionType      : String, // 'A07', 'A01', 'A03', 'A04'
+        refType         : String, // 'R08', 'R01', 'R02', 'R09', 'R10'
+        docNumber       : String,
+        docYear         : String,
+        postingDate     : Date,
+        documentDate    : Date,
+        headerText      : String,
+        materialSlip    : String,
+        grGiSlipNo      : String,
+        items           : array of GoodsMovementItemParam
+    ) returns { success: Boolean; docNum: String; docYear: String; message: String; errors: array of String; };
+
+    action cancelMaterialDocument(
+        materialDocumentNumber: String,
+        materialDocumentYear  : String,
+        postingDate           : Date,
+        reason                : String
+    ) returns { success: Boolean; docNum: String; docYear: String; message: String; errors: array of String; };
+
     // Custom Transactional Actions
     action calculateOrderCosts(orderId: UUID) returns { success: Boolean; };
     action checkMaterialAvailability(orderId: UUID) returns { success: Boolean; shortageCount: Integer; };

@@ -1777,6 +1777,328 @@ this.on('changeDatesAndTimes', async (req) => {
 });
 
 // ----------------------------------------------------------------
+// ACTION: Check Goods Movement (A07, A01, A03, A04 across R08, R01, R02, R09, R10)
+// ----------------------------------------------------------------
+this.on('checkGoodsMovement', async (req) => {
+    const role = req.headers ? (req.headers['x-user-role'] || req.user?.role) : 'PURCHASER';
+    if (role && role !== 'SYS_ADMIN' && role !== 'PURCHASER') {
+        return req.error(403, 'Access Denied: Goods Movement operations are restricted to System Admin and Purchaser personas.');
+    }
+    return this._checkGoodsMovementInternal(req.data);
+});
+
+// ----------------------------------------------------------------
+// ACTION: Post Goods Movement (A07, A01, A03, A04)
+// ----------------------------------------------------------------
+this.on('postGoodsMovement', async (req) => {
+    const role = req.headers ? (req.headers['x-user-role'] || req.user?.role) : 'PURCHASER';
+    if (role && role !== 'SYS_ADMIN' && role !== 'PURCHASER') {
+        return req.error(403, 'Access Denied: Goods Movement operations are restricted to System Admin and Purchaser personas.');
+    }
+    const { actionType, refType, docNumber, docYear, postingDate, documentDate, headerText, materialSlip, grGiSlipNo, items } = req.data;
+    const currentYear = String(new Date().getFullYear());
+    const today = new Date().toISOString().split('T')[0];
+    const pDate = postingDate || today;
+    const dDate = documentDate || today;
+
+    // 1. Re-validate via check Goods Movement helper
+    const checkRes = await this._checkGoodsMovementInternal(req.data);
+    if (!checkRes.success) {
+        return req.error(400, checkRes.errors?.join(' | ') || checkRes.message);
+    }
+
+    // 2. A03 Cancellation Posting
+    if (actionType === 'A03') {
+        const origDocs = await SELECT.from('sap.production.portal.GoodsMovements').where({ movementNumber: docNumber });
+        if (!origDocs || origDocs.length === 0) {
+            return req.error(404, `Material Document ${docNumber} not found.`);
+        }
+        
+        const revDocNum = '50' + Math.floor(10000000 + Math.random() * 90000000);
+
+        for (const orig of origDocs) {
+            const revMvtType = orig.movementType === '101' ? '102' : (orig.movementType === '261' ? '262' : '999');
+            
+            // Create reversal movement record
+            await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                ID               : cds.utils.uuid(),
+                movementNumber   : revDocNum,
+                movementYear     : currentYear,
+                order_ID         : orig.order_ID,
+                purchaseOrder_ID : orig.purchaseOrder_ID,
+                reservation_ID   : orig.reservation_ID,
+                material_ID      : orig.material_ID,
+                plant_ID         : orig.plant_ID,
+                storageLocation_ID: orig.storageLocation_ID,
+                movementType     : revMvtType,
+                quantity         : orig.quantity,
+                unit             : orig.unit,
+                postingDate      : pDate,
+                documentDate     : dDate,
+                headerText       : `Cancellation of ${orig.movementNumber}`,
+                isCancelled      : false,
+                reversalRefDoc   : orig.movementNumber,
+                status           : 'POSTED'
+            });
+
+            // Mark original document as cancelled
+            await UPDATE('sap.production.portal.GoodsMovements')
+                .set({ isCancelled: true, cancelledByDoc: revDocNum, status: 'CANCELLED' })
+                .where({ ID: orig.ID });
+
+            // Reverse Order Component issued quantity if GI reversal (262)
+            if (orig.movementType === '261' && orig.order_ID) {
+                const comp = await SELECT.one.from('sap.production.portal.OrderComponents')
+                    .where({ order_ID: orig.order_ID, componentMaterial_ID: orig.material_ID });
+                if (comp) {
+                    const revIssued = Math.max(0, (parseFloat(comp.issuedQty) || 0) - parseFloat(orig.quantity));
+                    await UPDATE('sap.production.portal.OrderComponents')
+                        .set({
+                            issuedQty: revIssued,
+                            status   : revIssued === 0 ? 'RESV' : 'MSPT'
+                        })
+                        .where({ ID: comp.ID });
+                }
+            }
+
+            // Reverse Production Order delivered quantity if GR reversal (102)
+            if (orig.movementType === '101' && orig.order_ID) {
+                const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orig.order_ID });
+                if (order) {
+                    const revDelivered = Math.max(0, (parseFloat(order.deliveredQty) || 0) - parseFloat(orig.quantity));
+                    await UPDATE('sap.production.portal.ProductionOrders')
+                        .set({ deliveredQty: revDelivered })
+                        .where({ ID: order.ID });
+                }
+            }
+
+            // Reverse Purchase Order received quantity if GR reversal (102)
+            if (orig.movementType === '101' && orig.purchaseOrder_ID) {
+                const poItems = await SELECT.from('sap.production.portal.PurchaseOrderItems')
+                    .where({ purchaseOrder_ID: orig.purchaseOrder_ID, material_ID: orig.material_ID });
+                if (poItems && poItems.length > 0) {
+                    const poItem = poItems[0];
+                    const revReceived = Math.max(0, (parseFloat(poItem.receivedQty) || 0) - parseFloat(orig.quantity));
+                    await UPDATE('sap.production.portal.PurchaseOrderItems')
+                        .set({
+                            receivedQty: revReceived,
+                            isDeliveryCompleted: revReceived >= parseFloat(poItem.orderedQty)
+                        })
+                        .where({ ID: poItem.ID });
+                }
+            }
+        }
+
+        return { success: true, docNum: revDocNum, docYear: currentYear, message: `Material document ${revDocNum} posted (Cancellation of ${docNumber})` };
+    }
+
+    // 3. A07 Goods Issue Posting
+    if (actionType === 'A07') {
+        const docNum = '49' + Math.floor(10000000 + Math.random() * 90000000);
+        const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
+        const userId = req.headers ? (req.headers['x-user-id'] || 'SYSTEM') : 'SYSTEM';
+        const nowIso = new Date().toISOString();
+
+        for (const item of items) {
+            const mat = item.materialCode ? await SELECT.one.from('sap.production.portal.Materials').where({ code: item.materialCode }) : null;
+            const plant = item.plantCode ? await SELECT.one.from('sap.production.portal.Plants').where({ code: item.plantCode }) : null;
+            const sloc = item.slocCode && plant ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: item.slocCode, plant_ID: plant.ID }) : null;
+
+            const orderIdVal = (order && order.ID) ? order.ID : null;
+            const matIdVal = (mat && mat.ID) ? mat.ID : null;
+            const plantIdVal = (plant && plant.ID) ? plant.ID : null;
+            const slocIdVal = (sloc && sloc.ID) ? sloc.ID : null;
+
+            await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                ID                : cds.utils.uuid(),
+                createdAt         : nowIso,
+                createdBy         : userId,
+                modifiedAt        : nowIso,
+                modifiedBy        : userId,
+                movementNumber    : String(docNum),
+                movementYear      : String(currentYear),
+                order_ID          : orderIdVal ? String(orderIdVal) : null,
+                purchaseOrder_ID  : null,
+                reservation_ID    : null,
+                material_ID       : matIdVal ? String(matIdVal) : null,
+                plant_ID          : plantIdVal ? String(plantIdVal) : null,
+                storageLocation_ID: slocIdVal ? String(slocIdVal) : null,
+                movementType      : '261',
+                quantity          : Number(item.quantity) || 0,
+                unit              : String(item.unit || 'PC'),
+                postingDate       : String(pDate),
+                documentDate      : String(dDate),
+                headerText        : String(headerText || `GI for order ${docNumber}`),
+                materialSlip      : materialSlip ? String(materialSlip) : '',
+                grGiSlipNo        : grGiSlipNo ? String(grGiSlipNo) : '',
+                batchNumber       : item.batchNumber ? String(item.batchNumber) : 'B001',
+                stockType         : item.stockType ? String(item.stockType) : 'Unrestricted-Use',
+                isCancelled       : 0,
+                cancelledByDoc    : '',
+                reversalRefDoc    : '',
+                status            : 'POSTED'
+            });
+
+            if (item.componentId) {
+                const comp = await SELECT.one.from('sap.production.portal.OrderComponents').where({ ID: item.componentId });
+                if (comp) {
+                    const newIssued = (parseFloat(comp.issuedQty) || 0) + parseFloat(item.quantity);
+                    const isFinal = item.finalIssue || newIssued >= parseFloat(comp.requiredQty);
+                    await UPDATE('sap.production.portal.OrderComponents')
+                        .set({
+                            issuedQty: newIssued,
+                            status   : isFinal ? 'ISSD' : (newIssued > 0 ? 'MSPT' : 'RESV')
+                        })
+                        .where({ ID: comp.ID });
+                }
+            }
+        }
+
+        if (order) {
+            await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+                ID      : cds.utils.uuid(),
+                createdAt: nowIso,
+                createdBy: userId,
+                modifiedAt: nowIso,
+                modifiedBy: userId,
+                type    : 'INFO',
+                order_ID: order.ID,
+                message : `Goods Issue (261) posted for order ${docNumber}. Material Doc: ${docNum}`,
+                isRead  : 0
+            });
+        }
+
+        return { success: true, docNum, docYear: currentYear, message: `Material document ${docNum} posted` };
+    }
+
+    // 4. A01 Goods Receipt Posting
+    if (actionType === 'A01') {
+        const docNum = '50' + Math.floor(10000000 + Math.random() * 90000000);
+
+        if (refType === 'R08') { // Order GR
+            const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
+            for (const item of items) {
+                const mat = item.materialCode ? await SELECT.one.from('sap.production.portal.Materials').where({ code: item.materialCode }) : null;
+                const plant = item.plantCode ? await SELECT.one.from('sap.production.portal.Plants').where({ code: item.plantCode }) : null;
+                const sloc = item.slocCode && plant ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: item.slocCode, plant_ID: plant.ID }) : null;
+
+                await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                    ID              : cds.utils.uuid(),
+                    movementNumber  : docNum,
+                    movementYear    : currentYear,
+                    order_ID        : order?.ID || null,
+                    material_ID     : mat?.ID || order?.material_ID,
+                    plant_ID        : plant?.ID || order?.plant_ID,
+                    storageLocation_ID: sloc?.ID || order?.storageLocation_ID,
+                    movementType    : '101',
+                    quantity        : parseFloat(item.quantity),
+                    unit            : item.unit || 'PC',
+                    postingDate     : pDate,
+                    documentDate    : dDate,
+                    headerText      : headerText || `GR for Order ${docNumber}`,
+                    materialSlip    : materialSlip || null,
+                    grGiSlipNo      : grGiSlipNo || null,
+                    batchNumber     : item.batchNumber || order?.batchNumber || 'B001',
+                    stockType       : item.stockType || 'Unrestricted-Use',
+                    status          : 'POSTED'
+                });
+
+                if (order) {
+                    const newDelivered = (parseFloat(order.deliveredQty) || 0) + parseFloat(item.quantity);
+                    await UPDATE('sap.production.portal.ProductionOrders')
+                        .set({ deliveredQty: newDelivered })
+                        .where({ ID: order.ID });
+                }
+            }
+
+            return { success: true, docNum, docYear: currentYear, message: `Material document ${docNum} posted` };
+        } else if (refType === 'R01') { // PO GR
+            const po = await SELECT.one.from('sap.production.portal.PurchaseOrders').where({ poNumber: docNumber });
+            for (const item of items) {
+                const mat = item.materialCode ? await SELECT.one.from('sap.production.portal.Materials').where({ code: item.materialCode }) : null;
+                const plant = item.plantCode ? await SELECT.one.from('sap.production.portal.Plants').where({ code: item.plantCode }) : null;
+                const sloc = item.slocCode && plant ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: item.slocCode, plant_ID: plant.ID }) : null;
+
+                await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                    ID              : cds.utils.uuid(),
+                    movementNumber  : docNum,
+                    movementYear    : currentYear,
+                    purchaseOrder_ID: po?.ID || null,
+                    material_ID     : mat?.ID || null,
+                    plant_ID        : plant?.ID || null,
+                    storageLocation_ID: sloc?.ID || null,
+                    movementType    : '101',
+                    quantity        : parseFloat(item.quantity),
+                    unit            : item.unit || 'PC',
+                    postingDate     : pDate,
+                    documentDate    : dDate,
+                    headerText      : headerText || `GR for PO ${docNumber}`,
+                    materialSlip    : materialSlip || null,
+                    grGiSlipNo      : grGiSlipNo || null,
+                    batchNumber     : item.batchNumber || 'B001',
+                    stockType       : item.stockType || 'Unrestricted-Use',
+                    status          : 'POSTED'
+                });
+
+                if (item.poItemId) {
+                    const poItem = await SELECT.one.from('sap.production.portal.PurchaseOrderItems').where({ ID: item.poItemId });
+                    if (poItem) {
+                        const newReceived = (parseFloat(poItem.receivedQty) || 0) + parseFloat(item.quantity);
+                        const isComp = newReceived >= parseFloat(poItem.orderedQty);
+                        await UPDATE('sap.production.portal.PurchaseOrderItems')
+                            .set({
+                                receivedQty: newReceived,
+                                isDeliveryCompleted: isComp
+                            })
+                            .where({ ID: poItem.ID });
+                    }
+                }
+            }
+
+            if (po) {
+                const allPoItems = await SELECT.from('sap.production.portal.PurchaseOrderItems').where({ purchaseOrder_ID: po.ID });
+                const allReceived = allPoItems.every(i => i.isDeliveryCompleted || parseFloat(i.receivedQty) >= parseFloat(i.orderedQty));
+                const anyReceived = allPoItems.some(i => parseFloat(i.receivedQty) > 0);
+                await UPDATE('sap.production.portal.PurchaseOrders')
+                    .set({ status: allReceived ? 'COMP' : (anyReceived ? 'PART' : 'OPEN') })
+                    .where({ ID: po.ID });
+            }
+
+            return { success: true, docNum, docYear: currentYear, message: `Material document ${docNum} posted` };
+        } else if (refType === 'R10') { // Manual GR
+            for (const item of items) {
+                const mat = item.materialCode ? await SELECT.one.from('sap.production.portal.Materials').where({ code: item.materialCode }) : null;
+                const plant = item.plantCode ? await SELECT.one.from('sap.production.portal.Plants').where({ code: item.plantCode }) : null;
+                const sloc = item.slocCode && plant ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: item.slocCode, plant_ID: plant.ID }) : null;
+
+                await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                    ID              : cds.utils.uuid(),
+                    movementNumber  : docNum,
+                    movementYear    : currentYear,
+                    material_ID     : mat?.ID || null,
+                    plant_ID        : plant?.ID || null,
+                    storageLocation_ID: sloc?.ID || null,
+                    movementType    : '101',
+                    quantity        : parseFloat(item.quantity),
+                    unit            : item.unit || 'PC',
+                    postingDate     : pDate,
+                    documentDate    : dDate,
+                    headerText      : headerText || 'Other Goods Receipt',
+                    materialSlip    : materialSlip || null,
+                    grGiSlipNo      : grGiSlipNo || null,
+                    batchNumber     : item.batchNumber || 'B001',
+                    stockType       : item.stockType || 'Unrestricted-Use',
+                    status          : 'POSTED'
+                });
+            }
+            return { success: true, docNum, docYear: currentYear, message: `Material document ${docNum} posted` };
+        }
+    }
+
+    return req.error(400, 'Unsupported action/reference combination.');
+});
+
+// ----------------------------------------------------------------
 // ACTION: Read PP Master Data (re-sync BOM and Routing to order)
 // ----------------------------------------------------------------
 this.on('readPPMasterData', async (req) => {
@@ -2260,6 +2582,8 @@ this.on('closeOrder', async (req) => {
         this.on('getProductionOrderReference', async (req) => {
             const { orderNumber } = req.data || {};
             const cleanOrderNum = String(orderNumber || '').trim();
+            const paddedOrderNum = cleanOrderNum.padStart(12, '0');
+            const unpaddedOrderNum = cleanOrderNum.replace(/^0+/, '');
 
             if (!cleanOrderNum) {
                 return req.reject(400, 'Production Order number is required.');
@@ -2267,15 +2591,72 @@ this.on('closeOrder', async (req) => {
 
             try {
                 const { A_ProductionOrder_2 } = sapOrderSrv.entities;
+                let sapOrder = null;
 
-                const sapOrders = await sapOrderSrv.run(
-                    SELECT.from(A_ProductionOrder_2)
-                        .where({ ManufacturingOrder: cleanOrderNum })
-                );
+                try {
+                    const sapOrders = await sapOrderSrv.run(
+                        SELECT.from(A_ProductionOrder_2)
+                            .where({ ManufacturingOrder: paddedOrderNum })
+                    );
+                    sapOrder = (sapOrders || [])[0];
+                    if (!sapOrder) {
+                        const unpaddedOrders = await sapOrderSrv.run(
+                            SELECT.from(A_ProductionOrder_2)
+                                .where({ ManufacturingOrder: unpaddedOrderNum })
+                        );
+                        sapOrder = (unpaddedOrders || [])[0];
+                    }
+                } catch (sapConnErr) {
+                    console.warn(`[SAP Cloud Query Warning] SAP S/4HANA destination connection unavailable: ${sapConnErr.message}`);
+                }
 
-                const sapOrder = (sapOrders || [])[0];
+                // If not found in SAP destination, check local SQLite database
                 if (!sapOrder) {
-                    return req.reject(404, `Production Order ${cleanOrderNum} could not be found in SAP S/4HANA.`);
+                    const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                        .where({ orderNumber: cleanOrderNum })
+                        .columns(o => {
+                            o('*');
+                            o.material(m => { m('*') });
+                            o.plant(p => { p('*') });
+                            o.storageLocation(s => { s('*') });
+                            o.components(c => { c('*'); c.componentMaterial(cm => { cm('*') }); c.storageLocation(cs => { cs('*') }); });
+                        });
+
+                    if (localOrder) {
+                        return {
+                            success             : true,
+                            orderNumber         : localOrder.orderNumber,
+                            materialId          : localOrder.material_ID,
+                            materialCode        : localOrder.material?.code || '',
+                            materialDescription : localOrder.material?.description || '',
+                            plantId             : localOrder.plant_ID,
+                            plantCode           : localOrder.plant?.code || '',
+                            storageLocationId   : localOrder.storageLocation_ID,
+                            storageLocationCode : localOrder.storageLocation?.code || '',
+                            orderType           : 'ZPPS',
+                            targetQty           : parseFloat(localOrder.targetQty) || 100,
+                            productionUnit      : localOrder.material?.baseUnit || 'PC',
+                            plannedStartDate    : localOrder.plannedStartDate || '',
+                            plannedEndDate      : localOrder.plannedEndDate || '',
+                            status              : localOrder.status || 'REL',
+                            components          : (localOrder.components || []).map((c, idx) => ({
+                                itemNumber           : String((idx + 1) * 10).padStart(4, '0'),
+                                componentMaterialCode: c.componentMaterial?.code || c.componentMaterial_ID,
+                                componentDescription : c.componentMaterial?.description || c.componentMaterial_ID,
+                                requiredQty          : parseFloat(c.requiredQty) || 0,
+                                unit                 : c.unit || 'KG',
+                                itemCategory         : 'L',
+                                operationSequence    : '0010',
+                                sequence             : '0',
+                                plantCode            : localOrder.plant?.code || '',
+                                storageLocationCode  : c.storageLocation?.code || '',
+                                batchNumber          : '',
+                                isBackflushed        : !!c.isBackflushed
+                            }))
+                        };
+                    }
+
+                    return req.reject(404, `Production Order ${cleanOrderNum} could not be found.`);
                 }
 
                 // Resolve plant, material, and sloc to local IDs so creation modal is pre-selected correctly
@@ -2306,10 +2687,15 @@ this.on('closeOrder', async (req) => {
 
                 // Retrieve components from SAP for this reference order
                 const { A_ProductionOrderComponent_2 } = sapOrderSrv.entities;
-                const sapComps = await sapOrderSrv.run(
-                    SELECT.from(A_ProductionOrderComponent_2)
-                        .where({ ManufacturingOrder: cleanOrderNum })
-                );
+                let sapComps = [];
+                try {
+                    sapComps = await sapOrderSrv.run(
+                        SELECT.from(A_ProductionOrderComponent_2)
+                            .where({ ManufacturingOrder: sapOrder.ManufacturingOrder })
+                    );
+                } catch (compErr) {
+                    console.warn(`[SAP Component Fetch Warning] Failed to query SAP components: ${compErr.message}`);
+                }
 
                 const components = [];
                 for (let idx = 0; idx < (sapComps || []).length; idx++) {
@@ -2325,7 +2711,7 @@ this.on('closeOrder', async (req) => {
                         operationSequence    : c.ManufacturingOrderOperation || '0010',
                         sequence             : c.ManufacturingOrderSequence || '0',
                         plantCode            : c.ProductionPlant || c.Plant || sapOrder.ProductionPlant,
-                        storageLocationCode  : c.StorageLocation || 'RAW1',
+                        storageLocationCode  : c.StorageLocation || '',
                         batchNumber          : '',
                         isBackflushed        : !!c.MatlCompIsMarkedForBackflush
                     });
@@ -2352,7 +2738,7 @@ this.on('closeOrder', async (req) => {
 
             } catch (err) {
                 console.error(`[SAP Reference Error] Failed to fetch reference order ${cleanOrderNum}:`, err);
-                return req.reject(500, `SAP Error: ${err.message || 'Could not retrieve reference order from SAP.'}`);
+                return req.reject(500, `SAP Error: ${err.message || 'Could not retrieve reference order.'}`);
             }
         });
 
@@ -3134,6 +3520,183 @@ this.on('closeOrder', async (req) => {
         return await SELECT.one.from('sap.production.portal.Routings')
             .where({ material_ID: materialId, plant_ID: plantId })
             .columns(r => { r('*'); r.operations(o => { o('*') }); });
+    }
+
+    // Helper for checkGoodsMovement business logic
+    async _checkGoodsMovementInternal(data) {
+        const { actionType, refType, docNumber, docYear, postingDate, documentDate, headerText, items } = data;
+        const errors = [];
+
+        if (!actionType || !refType) {
+            errors.push('Action type and Reference type are required.');
+            return { success: false, message: 'Check failed', errors };
+        }
+
+        // A04 Display is always valid as read-only check
+        if (actionType === 'A04') {
+            return { success: true, message: 'Document is valid for display mode.', errors: [] };
+        }
+
+        // A03 Cancellation check
+        if (actionType === 'A03') {
+            if (!docNumber) {
+                errors.push('Material Document number is required for cancellation.');
+                return { success: false, message: 'Check failed', errors };
+            }
+            const matDocList = await SELECT.from('sap.production.portal.GoodsMovements').where({ movementNumber: docNumber });
+            if (!matDocList || matDocList.length === 0) {
+                errors.push(`Material Document ${docNumber} not found.`);
+                return { success: false, message: 'Check failed', errors };
+            }
+            if (matDocList.some(m => m.isCancelled)) {
+                errors.push(`Material Document ${docNumber} is already cancelled.`);
+                return { success: false, message: 'Check failed', errors };
+            }
+            return { success: true, message: `Material Document ${docNumber} is eligible for cancellation.`, errors: [] };
+        }
+
+        // A07 Goods Issue check
+        if (actionType === 'A07') {
+            if (refType === 'R08' || refType === 'R09') {
+                if (!docNumber) {
+                    errors.push(`${refType === 'R08' ? 'Production Order' : 'Reservation'} number is required.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
+                if (!order) {
+                    errors.push(`Order ${docNumber} not found.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                if (!items || items.length === 0) {
+                    const formattedDocNum = String(docNumber).padStart(12, '0');
+                    errors.push(`Document ${formattedDocNum} does not contain any selectable items`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    const qty = parseFloat(item.quantity || 0);
+                    if (qty <= 0) {
+                        errors.push(`Item ${i + 1} (${item.materialCode}): Quantity must be greater than 0.`);
+                    }
+
+                    // Plant & Storage Location validation
+                    if (item.plantCode && item.slocCode) {
+                        const plant = await SELECT.one.from('sap.production.portal.Plants').where({ code: item.plantCode });
+                        if (plant) {
+                            const validSloc = await SELECT.one.from('sap.production.portal.StorageLocations').where({ code: item.slocCode, plant_ID: plant.ID });
+                            if (!validSloc) {
+                                errors.push(`Item ${i + 1} (${item.materialCode}): Storage location ${item.slocCode} does not belong to plant ${item.plantCode}.`);
+                            }
+                        }
+                    }
+
+                    if (item.componentId) {
+                        const comp = await SELECT.one.from('sap.production.portal.OrderComponents').where({ ID: item.componentId });
+                        if (comp) {
+                            const reqQty = parseFloat(comp.requiredQty) || 0;
+                            const issQty = parseFloat(comp.issuedQty) || 0;
+                            const remQty = reqQty - issQty;
+                            if (remQty <= 0 || comp.status === 'ISSD') {
+                                const formattedDocNum = String(docNumber).padStart(12, '0');
+                                errors.push(`Document ${formattedDocNum} does not contain any selectable items`);
+                            } else if (qty > remQty) {
+                                errors.push(`Item ${i + 1} (${item.materialCode}): Requested quantity (${qty}) exceeds remaining open quantity (${remQty}).`);
+                            }
+                        }
+                    }
+                }
+            } else if (refType === 'R10') { // Other
+                if (!items || items.length === 0) {
+                    errors.push('At least one item is required for manual Goods Issue (R10 Other).');
+                    return { success: false, message: 'Check failed', errors };
+                }
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (parseFloat(item.quantity || 0) <= 0) errors.push(`Item ${i + 1}: Quantity must be greater than 0.`);
+                    if (!item.materialCode) errors.push(`Item ${i + 1}: Material Code is required.`);
+                }
+            } else {
+                errors.push(`Action Goods Issue (A07) with reference ${refType} is not supported.`);
+            }
+        }
+
+        // A01 Goods Receipt check
+        if (actionType === 'A01') {
+            if (refType === 'R08') { // Order GR
+                if (!docNumber) {
+                    errors.push('Production Order number is required for Goods Receipt.');
+                    return { success: false, message: 'Check failed', errors };
+                }
+                const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
+                if (!order) {
+                    errors.push(`Production Order ${docNumber} not found.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                if (!['REL', 'STRT', 'PCNF', 'CNF', 'INSP'].some(st => (order.status || '').includes(st))) {
+                    errors.push(`Production Order ${docNumber} is in status ${order.status} and not released/confirmed for Goods Receipt.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                if (!items || items.length === 0) {
+                    errors.push('No finished product item loaded for Goods Receipt.');
+                    return { success: false, message: 'Check failed', errors };
+                }
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    const qty = parseFloat(item.quantity || 0);
+                    if (qty <= 0) errors.push(`Item ${i + 1}: Quantity must be greater than 0.`);
+                }
+            } else if (refType === 'R01') { // PO GR
+                if (!docNumber) {
+                    errors.push('Purchase Order number is required.');
+                    return { success: false, message: 'Check failed', errors };
+                }
+                const po = await SELECT.one.from('sap.production.portal.PurchaseOrders').where({ poNumber: docNumber });
+                if (!po) {
+                    errors.push(`Purchase Order ${docNumber} not found.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                if (!items || items.length === 0) {
+                    errors.push(`Purchase Order ${docNumber} does not contain any selectable open items.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    const qty = parseFloat(item.quantity || 0);
+                    if (qty <= 0) {
+                        errors.push(`PO Item ${item.line || i + 1}: Quantity must be greater than 0.`);
+                    }
+                    if (item.poItemId) {
+                        const poItem = await SELECT.one.from('sap.production.portal.PurchaseOrderItems').where({ ID: item.poItemId });
+                        if (poItem) {
+                            const openQty = (parseFloat(poItem.orderedQty) || 0) - (parseFloat(poItem.receivedQty) || 0);
+                            if (openQty <= 0 || poItem.isDeliveryCompleted) {
+                                errors.push(`PO Item ${poItem.itemNumber}: Already fully received/delivery completed.`);
+                            } else if (qty > openQty) {
+                                errors.push(`PO Item ${poItem.itemNumber}: Receipt quantity (${qty}) exceeds open PO quantity (${openQty}).`);
+                            }
+                        }
+                    }
+                }
+            } else if (refType === 'R10') { // Other GR
+                if (!items || items.length === 0) {
+                    errors.push('At least one item is required for manual Goods Receipt (R10 Other).');
+                    return { success: false, message: 'Check failed', errors };
+                }
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (parseFloat(item.quantity || 0) <= 0) errors.push(`Item ${i + 1}: Quantity must be greater than 0.`);
+                    if (!item.materialCode) errors.push(`Item ${i + 1}: Material Code is required.`);
+                }
+            } else {
+                errors.push(`Action Goods Receipt (A01) with reference ${refType} is not supported.`);
+            }
+        }
+
+        if (errors.length > 0) {
+            return { success: false, message: 'Check failed with errors.', errors };
+        }
+
+        return { success: true, message: 'Document is OK.', errors: [] };
     }
 
 

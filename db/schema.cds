@@ -196,6 +196,7 @@ entity OrderOperations : cuid, managed {
 entity OrderComponents : cuid, managed {
     order             : Association to ProductionOrders;
     componentMaterial : Association to Materials;
+    storageLocation   : Association to StorageLocations;
     requiredQty       : Decimal(15, 3);
     availableQty      : Decimal(15, 3) default 0;
     shortageQty       : Decimal(15, 3) default 0;
@@ -205,16 +206,73 @@ entity OrderComponents : cuid, managed {
     status            : String(10) default 'RESV'; // RESV, MSPT, ISSD
 }
 
-entity GoodsMovements : cuid, managed {
-    movementNumber : String(10); // e.g. "MATDOC0001"
-    order          : Association to ProductionOrders;
+entity PurchaseOrders : cuid, managed {
+    poNumber       : String(10); // e.g. "4500000123"
+    supplier       : String(100);
+    purchasingOrg  : String(4) default '1010';
+    companyCode    : String(4) default '1010';
+    documentDate   : Date;
+    status         : String(10) default 'OPEN'; // OPEN, PART, COMP
+    items          : Composition of many PurchaseOrderItems on items.purchaseOrder = $self;
+}
+
+entity PurchaseOrderItems : cuid, managed {
+    purchaseOrder  : Association to PurchaseOrders;
+    itemNumber     : Integer; // e.g. 10, 20
     material       : Association to Materials;
     plant          : Association to Plants;
     storageLocation: Association to StorageLocations;
-    movementType   : String(3); // '101' for GR, '261' for GI, '350' for QM Block, '551' for Scrap
-    quantity       : Decimal(15, 3);
-    unit           : String(3);
-    postingDate    : Date;
+    orderedQty     : Decimal(15, 3);
+    receivedQty    : Decimal(15, 3) default 0;
+    unit           : String(3) default 'PC';
+    netPrice       : Decimal(15, 2);
+    currency       : String(3) default 'USD';
+    isDeliveryCompleted : Boolean default false;
+}
+
+entity Reservations : cuid, managed {
+    reservationNumber : String(10); // e.g. "0000000570"
+    order             : Association to ProductionOrders;
+    requirementDate   : Date;
+    status            : String(10) default 'OPEN';
+    items             : Composition of many ReservationItems on items.reservation = $self;
+}
+
+entity ReservationItems : cuid, managed {
+    reservation    : Association to Reservations;
+    itemNumber     : Integer;
+    material       : Association to Materials;
+    plant          : Association to Plants;
+    storageLocation: Association to StorageLocations;
+    requiredQty    : Decimal(15, 3);
+    withdrawnQty   : Decimal(15, 3) default 0;
+    unit           : String(3) default 'PC';
+    isFinalIssue   : Boolean default false;
+}
+
+entity GoodsMovements : cuid, managed {
+    movementNumber    : String(10); // e.g. "MATDOC0001" or "4900001330"
+    movementYear      : String(4); // e.g. "2026"
+    order             : Association to ProductionOrders;
+    purchaseOrder     : Association to PurchaseOrders;
+    reservation       : Association to Reservations;
+    material          : Association to Materials;
+    plant             : Association to Plants;
+    storageLocation   : Association to StorageLocations;
+    movementType      : String(3); // '101' GR, '102' GR Reversal, '261' GI, '262' GI Reversal
+    quantity          : Decimal(15, 3);
+    unit              : String(3);
+    postingDate       : Date;
+    documentDate      : Date;
+    headerText        : String(255);
+    materialSlip      : String(50);
+    grGiSlipNo        : String(50);
+    batchNumber       : String(10);
+    stockType         : String(20) default 'Unrestricted-Use';
+    isCancelled       : Boolean default false;
+    cancelledByDoc    : String(10); // Movement number of reversal doc
+    reversalRefDoc    : String(10); // Original doc being cancelled
+    status            : String(10) default 'POSTED'; // POSTED, CANCELLED
 }
 
 entity QualityInspectionLots : cuid, managed {

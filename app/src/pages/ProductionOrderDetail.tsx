@@ -660,10 +660,8 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       </div>
 
-      {/* Two Column Layout (Header / Actions) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '3fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
-        {/* Header Details Card */}
-        <div className="sap-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', border: isChangeMode ? '2px solid #0a6ed1' : '1px solid var(--sap-border-color)' }}>
+      {/* Header Details Card */}
+      <div className="sap-card" style={{ marginBottom: '2rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', border: isChangeMode ? '2px solid #0a6ed1' : '1px solid var(--sap-border-color)' }}>
           <div>
             <div className="sap-card-header" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -1358,7 +1356,6 @@ export const ProductionOrderDetail: React.FC = () => {
 
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
-              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` })}>Cost Order</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('SAP Public Cloud requires active production version or BOM explosion for structural component additions.')}>Components</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('Operations are determined by SAP routing master data.')}>Operations</button>
@@ -1596,87 +1593,6 @@ export const ProductionOrderDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Action Panel */}
-        <div className="sap-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', justifyContent: 'center' }}>
-          <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#555', marginBottom: '0.25rem' }}>Operations & Costs Control</h4>
-
-          {/* Cost Order Button (SAP Public HANA style) */}
-          <button 
-            className="sap-btn" 
-            style={{ width: '100%', backgroundColor: '#5c7cfa', color: '#ffffff', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontWeight: 600 }}
-            onClick={() => fetchCostViewMutation.mutate({ actionName: 'getCostAnalysis', title: `Cost Analysis — Production Order ${order.orderNumber}` })}
-            disabled={fetchCostViewMutation.isPending}
-          >
-            <DollarSign size={16} />
-            <span>{calculateCostsMutation.isPending ? 'Calculating Costs...' : 'Cost Order (Goto -> Costs)'}</span>
-          </button>
-          
-          {/* ATP Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
-            <button 
-              className="sap-btn sap-btn-secondary" 
-              style={{ width: '100%' }}
-              onClick={() => checkMaterialMutation.mutate()}
-              disabled={checkMaterialMutation.isPending}
-            >
-              <ShoppingCart size={16} />
-              <span>{checkMaterialMutation.isPending ? 'Checking...' : 'Check Availability (ATP)'}</span>
-            </button>
-          )}
-
-          {/* Release Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER'].includes(user.role) && (order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('MACA')) && (
-            <button 
-              className="sap-btn sap-btn-primary" 
-              style={{ width: '100%' }}
-              onClick={() => releaseOrderMutation.mutate()}
-              disabled={releaseOrderMutation.isPending}
-            >
-              <CheckCircle2 size={16} />
-              <span>{releaseOrderMutation.isPending ? 'Releasing...' : 'Release Order (REL)'}</span>
-            </button>
-          )}
-
-          {/* Start Execution Button */}
-          {user && ['SYS_ADMIN', 'PROD_PLANNER', 'PROD_OPERATOR'].includes(user.role) && (order.status?.split(' ').includes('REL')) && (
-            <button 
-              className="sap-btn sap-btn-primary" 
-              style={{ width: '100%' }}
-              onClick={() => startOrderMutation.mutate()}
-              disabled={startOrderMutation.isPending}
-            >
-              <Play size={16} />
-              <span>{startOrderMutation.isPending ? 'Starting...' : 'Start Execution'}</span>
-            </button>
-          )}
-
-          {/* Goods Receipt Button */}
-          {user && ['SYS_ADMIN', 'INV_MANAGER'].includes(user.role) && (order.status?.split(' ').includes('CNF') || order.status?.split(' ').includes('PCNF')) && (
-            <button 
-              className="sap-btn sap-btn-primary" 
-              style={{ width: '100%', backgroundColor: '#2b7c2b' }}
-              onClick={() => { 
-                setShowGrForm(true); 
-                setGrSlocId(order.storageLocation_ID);
-                // Calculate remaining yield open for GR: confirmed yield or target qty minus delivered
-                const remainingYield = Math.max(0, (parseFloat(order.confirmedQty) || parseFloat(order.targetQty) || 0) - (parseFloat(order.deliveredQty) || 0));
-                setGrQty(remainingYield > 0 ? remainingYield.toString() : (parseFloat(order.targetQty) || 1).toString());
-              }}
-            >
-              <Truck size={16} />
-              <span>Post Goods Receipt (101)</span>
-            </button>
-          )}
-
-          {/* If no action matches */}
-          {!order.status?.split(' ').some((st: string) => ['CRTD', 'MACA', 'REL', 'CNF', 'PCNF'].includes(st)) && (
-            <div style={{ fontSize: '0.8rem', color: '#666', textAlign: 'center', padding: '0.5rem 0' }}>
-              No current control actions available in status <strong>{order.status}</strong>.
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* SAP Action Bar */}
       <div className="sap-card" style={{ marginBottom: '2rem', padding: '0.5rem 1rem' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'center' }}>
@@ -1685,7 +1601,6 @@ export const ProductionOrderDetail: React.FC = () => {
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Functions:</span>
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { calculateCostsMutation.mutate(); setShowCostsModal(true); }}>Cost Order</button>
             <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
           </div>
           
@@ -2267,7 +2182,7 @@ export const ProductionOrderDetail: React.FC = () => {
                     <tbody>
                       {order.costItems?.length === 0 ? (
                         <tr>
-                          <td colSpan={10} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No itemization lines available. Click 'Cost Order' to calculate.</td>
+                          <td colSpan={10} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No itemization lines available.</td>
                         </tr>
                       ) : (
                         order.costItems?.map((item: any) => (

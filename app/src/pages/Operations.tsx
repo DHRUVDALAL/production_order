@@ -248,14 +248,44 @@ export const Operations: React.FC = () => {
                             <span className={`sap-badge sap-badge-${op.status}`}>{op.status}</span>
                           </td>
                           <td>
-                            <button
-                              className="sap-btn sap-btn-primary"
-                              style={{ padding: '2px 8px', fontSize: '0.75rem' }}
-                              disabled={!isConfirmable}
-                              onClick={() => handleOpenConfirmDialog(order, op)}
-                            >
-                              Confirm
-                            </button>
+                            {op.status === 'REL' && (
+                              <button
+                                className="sap-btn sap-btn-primary"
+                                style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: '#0a6ed1' }}
+                                disabled={!isConfirmable}
+                                onClick={() => handleOpenConfirmDialog(order, op)}
+                              >
+                                Confirm
+                              </button>
+                            )}
+                            {op.status === 'PCNF' && (
+                              <button
+                                className="sap-btn sap-btn-secondary"
+                                style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: '#eaf1f8', color: '#0a6ed1', border: '1px solid #0a6ed1' }}
+                                disabled={!isConfirmable}
+                                onClick={() => handleOpenConfirmDialog(order, op)}
+                              >
+                                Continue Confirmation
+                              </button>
+                            )}
+                            {op.status === 'CNF' && (
+                              <button
+                                className="sap-btn"
+                                style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: '#f1f3f5', color: '#495057', border: '1px solid #ced4da' }}
+                                onClick={() => handleOpenConfirmDialog(order, op)}
+                              >
+                                Display Confirmation
+                              </button>
+                            )}
+                            {(op.status === 'TECO' || op.status === 'CLSD' || (!isConfirmable && op.status !== 'CNF')) && (
+                              <button
+                                disabled
+                                className="sap-btn"
+                                style={{ padding: '2px 8px', fontSize: '0.75rem', opacity: 0.5 }}
+                              >
+                                Confirm (Disabled)
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );

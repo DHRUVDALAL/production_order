@@ -36,6 +36,7 @@ export const Login: React.FC = () => {
     { username: 'inspector1', role: 'QUAL_INSPECTOR', name: 'Michael Chang (Quality)', pass: 'inspector123' },
     { username: 'supervisor1', role: 'PLANT_SUPV', name: 'Robert Vance (Supervisor)', pass: 'super123' },
     { username: 'manager1', role: 'PLANT_MGR', name: 'Jane Miller (Plant Manager)', pass: 'manager123' },
+    { username: 'purchaser1', role: 'PURCHASER', name: 'Purchaser (Purchasing)', pass: 'purchaser123' },
   ];
 
   const handleSelectDemoUser = (user: typeof demoUsers[0]) => {

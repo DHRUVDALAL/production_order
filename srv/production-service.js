@@ -1786,6 +1786,154 @@ this.on('checkGoodsMovement', async (req) => {
     }
     return this._checkGoodsMovementInternal(req.data);
 });
+// ----------------------------------------------------------------
+// ACTION: Calculate Goods Movement Eligibility (A07, A01, A03)
+// ----------------------------------------------------------------
+this.on('calculateGoodsMovementEligibility', async (req) => {
+    const { orderNumber, actionType } = req.data || {};
+    const cleanOrderNum = String(orderNumber || '').trim();
+    const unpaddedNum = cleanOrderNum.replace(/^0+/, '');
+    const paddedNum = cleanOrderNum.padStart(12, '0');
+
+    let order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: cleanOrderNum });
+    if (!order) {
+        order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: unpaddedNum });
+    }
+    if (!order) {
+        order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: paddedNum });
+    }
+
+    if (!order) {
+        return { success: false, message: `Production Order ${cleanOrderNum} not found.`, items: [], canPost: false };
+    }
+
+    const material = order.material_ID ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: order.material_ID }) : null;
+    const plant = order.plant_ID ? await SELECT.one.from('sap.production.portal.Plants').where({ ID: order.plant_ID }) : null;
+    const storageLocation = order.storageLocation_ID ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: order.storageLocation_ID }) : null;
+    const comps = await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: order.ID });
+
+    const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: order.ID });
+
+    const gr101Qty = (movements || [])
+        .filter(m => m.movementType === '101' && !m.isCancelled)
+        .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
+    const gr102Qty = (movements || [])
+        .filter(m => m.movementType === '102')
+        .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
+    const netReceivedQty = Math.max(parseFloat(order.deliveredQty) || 0, gr101Qty - gr102Qty);
+
+    const gi261ByMat = {};
+    const gi262ByMat = {};
+    (movements || []).forEach(m => {
+        if (m.material_ID) {
+            if (m.movementType === '261' && !m.isCancelled) {
+                gi261ByMat[m.material_ID] = (gi261ByMat[m.material_ID] || 0) + (parseFloat(m.quantity) || 0);
+            }
+            if (m.movementType === '262') {
+                gi262ByMat[m.material_ID] = (gi262ByMat[m.material_ID] || 0) + (parseFloat(m.quantity) || 0);
+            }
+        }
+    });
+
+    const targetQty = parseFloat(order.targetQty) || 0;
+    const remainingGRQty = Math.max(0, targetQty - netReceivedQty);
+
+    const resultItems = [];
+
+    if (actionType === 'A07') {
+        for (let idx = 0; idx < (comps || []).length; idx++) {
+            const c = comps[idx];
+            const mat = c.componentMaterial_ID ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: c.componentMaterial_ID }) : null;
+            const sloc = c.storageLocation_ID ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: c.storageLocation_ID }) : null;
+            const matId = c.componentMaterial_ID;
+            const reqQty = parseFloat(c.requiredQty) || 0;
+            const posted261 = gi261ByMat[matId] || 0;
+            const posted262 = gi262ByMat[matId] || 0;
+            const netIssued = Math.max(parseFloat(c.issuedQty) || 0, posted261 - posted262);
+            const remainingGIQty = Math.max(0, reqQty - netIssued);
+            const isFinallyIssued = c.status === 'ISSD' || remainingGIQty <= 0;
+            const isBackflushed = !!c.isBackflushed;
+            const isBulk = !!c.isBulkMaterial;
+
+            let selectable = true;
+            let reason = '';
+
+            if (isFinallyIssued) {
+                selectable = false;
+                reason = 'Component is fully issued';
+            } else if (isBackflushed) {
+                selectable = false;
+                reason = 'Backflushed components are issued automatically during confirmation';
+            } else if (isBulk) {
+                selectable = false;
+                reason = 'Bulk materials are issued via cost-center GI';
+            } else if (remainingGIQty <= 0) {
+                selectable = false;
+                reason = 'Remaining quantity is 0';
+            }
+
+            resultItems.push({
+                componentId: c.ID,
+                materialCode: mat?.code || c.componentMaterial_ID,
+                materialDesc: mat?.description || c.componentMaterial_ID,
+                requiredQty: reqQty,
+                alreadyIssuedQty: netIssued,
+                remainingQty: remainingGIQty,
+                alreadyReceivedQty: 0,
+                unit: c.unit || 'PC',
+                plantCode: plant?.code || '',
+                storageLocationCode: sloc?.code || '',
+                movementType: '261',
+                isBackflushed: isBackflushed,
+                isBulkMaterial: isBulk,
+                finalIssue: isFinallyIssued,
+                selectable: selectable,
+                reason: reason
+            });
+        }
+
+        const canPost = resultItems.some(i => i.selectable && i.remainingQty > 0);
+        return {
+            success: true,
+            message: canPost ? 'Eligible components found' : 'No selectable components remain',
+            orderNumber: order.orderNumber,
+            action: actionType,
+            orderStatus: order.status,
+            canPost: canPost,
+            items: resultItems
+        };
+    } else {
+        const canPost = remainingGRQty > 0 && order.status !== 'TECO' && order.status !== 'CLSD';
+        resultItems.push({
+            componentId: '',
+            materialCode: order.material?.code || '',
+            materialDesc: order.material?.description || '',
+            requiredQty: targetQty,
+            alreadyIssuedQty: 0,
+            remainingQty: remainingGRQty,
+            alreadyReceivedQty: netReceivedQty,
+            unit: order.material?.baseUnit || 'PC',
+            plantCode: order.plant?.code || '',
+            storageLocationCode: order.storageLocation?.code || '',
+            movementType: '101',
+            isBackflushed: false,
+            isBulkMaterial: false,
+            finalIssue: remainingGRQty <= 0,
+            selectable: canPost,
+            reason: canPost ? '' : (remainingGRQty <= 0 ? 'Order target quantity fully received' : `Order status is ${order.status}`)
+        });
+
+        return {
+            success: true,
+            message: canPost ? 'Receivable quantity available' : 'No remaining quantity available for Goods Receipt',
+            orderNumber: order.orderNumber,
+            action: actionType,
+            orderStatus: order.status,
+            canPost: canPost,
+            items: resultItems
+        };
+    }
+});
 
 // ----------------------------------------------------------------
 // ACTION: Post Goods Movement (A07, A01, A03, A04)
@@ -1819,31 +1967,43 @@ this.on('postGoodsMovement', async (req) => {
         for (const orig of origDocs) {
             const revMvtType = orig.movementType === '101' ? '102' : (orig.movementType === '261' ? '262' : '999');
             
-            // Create reversal movement record
+            const userId = req.headers ? (req.headers['x-user-id'] || 'SYSTEM') : 'SYSTEM';
+            const nowIso = new Date().toISOString();
+
+            // Create reversal movement record with 27 explicit columns
             await INSERT.into('sap.production.portal.GoodsMovements').entries({
-                ID               : cds.utils.uuid(),
-                movementNumber   : revDocNum,
-                movementYear     : currentYear,
-                order_ID         : orig.order_ID,
-                purchaseOrder_ID : orig.purchaseOrder_ID,
-                reservation_ID   : orig.reservation_ID,
-                material_ID      : orig.material_ID,
-                plant_ID         : orig.plant_ID,
-                storageLocation_ID: orig.storageLocation_ID,
-                movementType     : revMvtType,
-                quantity         : orig.quantity,
-                unit             : orig.unit,
-                postingDate      : pDate,
-                documentDate     : dDate,
-                headerText       : `Cancellation of ${orig.movementNumber}`,
-                isCancelled      : false,
-                reversalRefDoc   : orig.movementNumber,
-                status           : 'POSTED'
+                ID                : cds.utils.uuid(),
+                createdAt         : nowIso,
+                createdBy         : userId,
+                modifiedAt        : nowIso,
+                modifiedBy        : userId,
+                movementNumber    : String(revDocNum),
+                movementYear      : String(currentYear),
+                order_ID          : orig.order_ID ? String(orig.order_ID) : null,
+                purchaseOrder_ID  : orig.purchaseOrder_ID ? String(orig.purchaseOrder_ID) : null,
+                reservation_ID    : orig.reservation_ID ? String(orig.reservation_ID) : null,
+                material_ID       : orig.material_ID ? String(orig.material_ID) : null,
+                plant_ID          : orig.plant_ID ? String(orig.plant_ID) : null,
+                storageLocation_ID: orig.storageLocation_ID ? String(orig.storageLocation_ID) : null,
+                movementType      : String(revMvtType),
+                quantity          : Number(orig.quantity) || 0,
+                unit              : String(orig.unit || 'PC'),
+                postingDate       : String(pDate),
+                documentDate      : String(dDate),
+                headerText        : String(`Cancellation of ${orig.movementNumber}`),
+                materialSlip      : orig.materialSlip ? String(orig.materialSlip) : '',
+                grGiSlipNo        : orig.grGiSlipNo ? String(orig.grGiSlipNo) : '',
+                batchNumber       : orig.batchNumber ? String(orig.batchNumber) : 'B001',
+                stockType         : orig.stockType ? String(orig.stockType) : 'Unrestricted-Use',
+                isCancelled       : 0,
+                cancelledByDoc    : '',
+                reversalRefDoc    : String(orig.movementNumber),
+                status            : 'POSTED'
             });
 
             // Mark original document as cancelled
             await UPDATE('sap.production.portal.GoodsMovements')
-                .set({ isCancelled: true, cancelledByDoc: revDocNum, status: 'CANCELLED' })
+                .set({ isCancelled: 1, cancelledByDoc: String(revDocNum), status: 'CANCELLED' })
                 .where({ ID: orig.ID });
 
             // Reverse Order Component issued quantity if GI reversal (262)
@@ -3567,11 +3727,28 @@ this.on('closeOrder', async (req) => {
                     errors.push(`Order ${docNumber} not found.`);
                     return { success: false, message: 'Check failed', errors };
                 }
+
+                // Reconcile 261 vs 262 movement history
+                const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: order.ID });
+                const gi261ByMat = {};
+                const gi262ByMat = {};
+                (movements || []).forEach(m => {
+                    if (m.material_ID) {
+                        if (m.movementType === '261' && !m.isCancelled) {
+                            gi261ByMat[m.material_ID] = (gi261ByMat[m.material_ID] || 0) + (parseFloat(m.quantity) || 0);
+                        }
+                        if (m.movementType === '262') {
+                            gi262ByMat[m.material_ID] = (gi262ByMat[m.material_ID] || 0) + (parseFloat(m.quantity) || 0);
+                        }
+                    }
+                });
+
                 if (!items || items.length === 0) {
                     const formattedDocNum = String(docNumber).padStart(12, '0');
                     errors.push(`Document ${formattedDocNum} does not contain any selectable items`);
                     return { success: false, message: 'Check failed', errors };
                 }
+
                 for (let i = 0; i < items.length; i++) {
                     const item = items[i];
                     const qty = parseFloat(item.quantity || 0);
@@ -3593,9 +3770,13 @@ this.on('closeOrder', async (req) => {
                     if (item.componentId) {
                         const comp = await SELECT.one.from('sap.production.portal.OrderComponents').where({ ID: item.componentId });
                         if (comp) {
+                            const matId = comp.componentMaterial_ID;
+                            const posted261 = gi261ByMat[matId] || 0;
+                            const posted262 = gi262ByMat[matId] || 0;
+                            const netIssued = Math.max(parseFloat(comp.issuedQty) || 0, posted261 - posted262);
                             const reqQty = parseFloat(comp.requiredQty) || 0;
-                            const issQty = parseFloat(comp.issuedQty) || 0;
-                            const remQty = reqQty - issQty;
+                            const remQty = Math.max(0, reqQty - netIssued);
+
                             if (remQty <= 0 || comp.status === 'ISSD') {
                                 const formattedDocNum = String(docNumber).padStart(12, '0');
                                 errors.push(`Document ${formattedDocNum} does not contain any selectable items`);
@@ -3636,6 +3817,25 @@ this.on('closeOrder', async (req) => {
                     errors.push(`Production Order ${docNumber} is in status ${order.status} and not released/confirmed for Goods Receipt.`);
                     return { success: false, message: 'Check failed', errors };
                 }
+
+                // Reconcile 101 vs 102 movement history
+                const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: order.ID });
+                const gr101Qty = (movements || [])
+                    .filter(m => m.movementType === '101' && !m.isCancelled)
+                    .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
+                const gr102Qty = (movements || [])
+                    .filter(m => m.movementType === '102')
+                    .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
+                const netReceived = Math.max(parseFloat(order.deliveredQty) || 0, gr101Qty - gr102Qty);
+                const targetQty = parseFloat(order.targetQty) || 0;
+                const openGRQty = Math.max(0, targetQty - netReceived);
+
+                if (openGRQty <= 0) {
+                    const formattedDocNum = String(docNumber).padStart(12, '0');
+                    errors.push(`No remaining quantity available for Goods Receipt (Order ${formattedDocNum} is fully received).`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+
                 if (!items || items.length === 0) {
                     errors.push('No finished product item loaded for Goods Receipt.');
                     return { success: false, message: 'Check failed', errors };
@@ -3643,7 +3843,11 @@ this.on('closeOrder', async (req) => {
                 for (let i = 0; i < items.length; i++) {
                     const item = items[i];
                     const qty = parseFloat(item.quantity || 0);
-                    if (qty <= 0) errors.push(`Item ${i + 1}: Quantity must be greater than 0.`);
+                    if (qty <= 0) {
+                        errors.push(`Item ${i + 1}: Quantity must be greater than 0.`);
+                    } else if (qty > openGRQty) {
+                        errors.push(`Item ${i + 1} (${item.materialCode || 'Finished Product'}): Requested quantity (${qty}) exceeds remaining receivable quantity (${openGRQty}).`);
+                    }
                 }
             } else if (refType === 'R01') { // PO GR
                 if (!docNumber) {

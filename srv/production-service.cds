@@ -233,6 +233,37 @@ service ProductionService {
         quantity : Decimal(15,3)
     ) returns { success: Boolean; batchNumber: String; };
 
+    // Calculate Goods Movement Eligibility (A07, A01, A03)
+    action calculateGoodsMovementEligibility(
+        orderNumber : String,
+        actionType  : String
+    ) returns {
+        success      : Boolean;
+        message      : String;
+        orderNumber  : String;
+        action       : String;
+        orderStatus  : String;
+        canPost      : Boolean;
+        items        : array of {
+            componentId              : String;
+            materialCode             : String;
+            materialDesc             : String;
+            requiredQty              : Decimal(15,3);
+            alreadyIssuedQty         : Decimal(15,3);
+            remainingQty             : Decimal(15,3);
+            alreadyReceivedQty       : Decimal(15,3);
+            unit                     : String;
+            plantCode                : String;
+            storageLocationCode      : String;
+            movementType             : String;
+            isBackflushed            : Boolean;
+            isBulkMaterial           : Boolean;
+            finalIssue               : Boolean;
+            selectable               : Boolean;
+            reason                   : String;
+        };
+    };
+
     // Get Output Items
     action getOutputItems(orderId: UUID) returns array of {
         ID           : String;

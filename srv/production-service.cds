@@ -109,6 +109,11 @@ service ProductionService {
         postingDate: Date
     ) returns { success: Boolean; status: String; };
 
+    action cancelProductionOrderConfirmation(
+        orderId        : UUID,
+        confirmationId : String
+    ) returns { success: Boolean; message: String; status: String; portalWorkflowStep: String; };
+
     action submitUsageDecision(
         lotId: UUID, 
         approvedQty: Decimal(15, 3), 

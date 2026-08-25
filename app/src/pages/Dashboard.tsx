@@ -9,7 +9,7 @@ export const Dashboard: React.FC = () => {
   const { user } = useAuth();
 
   // Fetch production orders
-  const { data: ordersData, isLoading: ordersLoading } = useQuery({
+  const { data: ordersData, isLoading: ordersLoading, isError: ordersError, error: ordersErr } = useQuery<any[]>({
     queryKey: ['productionOrders'],
     queryFn: async () => {
       const res = await api.get('/odata/v4/production/ProductionOrders');
@@ -18,7 +18,7 @@ export const Dashboard: React.FC = () => {
   });
 
   // Fetch notifications
-  const { data: notificationsData, isLoading: notificationsLoading } = useQuery({
+  const { data: notificationsData, isLoading: notificationsLoading, isError: notificationsError, error: notificationsErr } = useQuery<any[]>({
     queryKey: ['notifications'],
     queryFn: async () => {
       const res = await api.get('/odata/v4/production/ProductionNotifications?$expand=order');
@@ -39,15 +39,29 @@ export const Dashboard: React.FC = () => {
     );
   }
 
+  if (ordersError || notificationsError) {
+    const errMessage = (ordersErr as any)?.response?.data?.error?.message || (notificationsErr as any)?.response?.data?.error?.message || 'Unable to load production metrics from server.';
+    return (
+      <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>
+        <div style={{ backgroundColor: '#ffe3e3', border: '1px solid #ffb3b3', color: '#bb0000', padding: '1rem 1.5rem', borderRadius: '6px', fontSize: '0.9rem' }}>
+          <strong>Error Loading Dashboard Data:</strong> {errMessage}
+        </div>
+      </div>
+    );
+  }
+
+  const orders = ordersData || [];
+  const notifications = notificationsData || [];
+
   // Calculate metrics
-  const total = ordersData.length;
-  const draft = ordersData.filter((o: any) => o.status === 'DRAFT').length;
-  const created = ordersData.filter((o: any) => o.status === 'CRTD' || o.status === 'MACA').length;
-  const inProgress = ordersData.filter((o: any) => ['REL', 'STRT', 'GI', 'GMPS', 'INSP', 'CNF'].includes(o.status)).length;
-  const completed = ordersData.filter((o: any) => ['GR', 'PDLV', 'DLV', 'TECO', 'CLSD'].includes(o.status)).length;
+  const total = orders.length;
+  const draft = orders.filter((o: any) => o.status === 'DRAFT').length;
+  const created = orders.filter((o: any) => o.status === 'CRTD' || o.status === 'MACA').length;
+  const inProgress = orders.filter((o: any) => ['REL', 'STRT', 'GI', 'GMPS', 'INSP', 'CNF'].includes(o.status)).length;
+  const completed = orders.filter((o: any) => ['GR', 'PDLV', 'DLV', 'TECO', 'CLSD'].includes(o.status)).length;
 
   // Recent 5 alerts
-  const recentAlerts = notificationsData.slice(0, 5);
+  const recentAlerts = notifications.slice(0, 5);
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', fontFamily: 'var(--font-sans)' }}>

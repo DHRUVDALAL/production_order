@@ -109,6 +109,7 @@ export const ProductionOrderDetail: React.FC = () => {
   const [showMissingPartsSubmenu, setShowMissingPartsSubmenu] = useState(false);
   const [showLogsSubmenu, setShowLogsSubmenu] = useState(false);
   const [showOperationSubmenu, setShowOperationSubmenu] = useState(false);
+  const [showOperationDetailsModal, setShowOperationDetailsModal] = useState(false);
   const [showOutputSubmenu, setShowOutputSubmenu] = useState(false);
   const [showReprintModal, setShowReprintModal] = useState(false);
   const [selectedReprintType, setSelectedReprintType] = useState('PP_PRT');
@@ -205,6 +206,9 @@ export const ProductionOrderDetail: React.FC = () => {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['statusChanges', id] });
       setSuccessMsg(`Status updated successfully in SAP S/4HANA (New Status: ${data?.status || 'Updated'})`);
       setShowSapMenuDropdown(false);
       setShowFunctionsSubmenu(false);
@@ -238,15 +242,19 @@ export const ProductionOrderDetail: React.FC = () => {
     mutationFn: async (newQty: number) => {
       setErrorMsg('');
       setSuccessMsg('');
-      const res = await api.patch(`/odata/v4/production/ProductionOrders(${id})`, {
-        targetQty: newQty
+      const res = await api.post('/odata/v4/production/changeNetQuantity', {
+        orderId: id,
+        newQuantity: newQty,
+        reason: 'Inline Target Quantity Update'
       });
       return res.data;
     },
-    onSuccess: () => {
-      setSuccessMsg('Target quantity updated successfully!');
+    onSuccess: (data: any) => {
+      setSuccessMsg(data?.message || 'Target quantity updated successfully!');
       setIsEditingQty(false);
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
     },
     onError: (err: any) => {
       setErrorMsg(err.response?.data?.error?.message || 'Failed to update target quantity.');
@@ -572,6 +580,27 @@ export const ProductionOrderDetail: React.FC = () => {
     enabled: showStatusChangesModal
   });
 
+  const handleOperationDetails = () => {
+    setShowOperationDetailsModal(true);
+    const el = document.getElementById('operations-section');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F7' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        handleOperationDetails();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   if (isLoading || !order) {
     return <div style={{ padding: '2rem', fontFamily: 'var(--font-sans)' }}>Loading order details...</div>;
   }
@@ -591,17 +620,18 @@ export const ProductionOrderDetail: React.FC = () => {
   // Find slocs for local plant
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
-  // Determine stage index for progress bar
-  // Determine stage index for progress bar
+  // Determine stage index for progress bar based on portalWorkflowStep
   const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
-  let mappedStatus = 'CRTD';
-  const activeStatuses = (order.status || '').split(' ');
-  if (activeStatuses.includes('CLSD')) mappedStatus = 'CLSD';
-  else if (activeStatuses.includes('TECO')) mappedStatus = 'TECO';
-  else if (activeStatuses.includes('DLV') || activeStatuses.includes('PDLV')) mappedStatus = 'GR';
-  else if (activeStatuses.includes('CNF') || activeStatuses.includes('PCNF')) mappedStatus = 'CNF';
-  else if (activeStatuses.includes('REL')) mappedStatus = 'REL';
-  else if (activeStatuses.includes('DRAFT')) mappedStatus = 'DRAFT';
+  let mappedStatus = order.portalWorkflowStep || 'CRTD';
+  if (!order.portalWorkflowStep) {
+    const activeStatuses = (order.status || '').split(' ');
+    if (activeStatuses.includes('CLSD')) mappedStatus = 'CLSD';
+    else if (activeStatuses.includes('TECO')) mappedStatus = 'TECO';
+    else if (activeStatuses.includes('DLV') || activeStatuses.includes('PDLV')) mappedStatus = 'GR';
+    else if (activeStatuses.includes('CNF') || activeStatuses.includes('PCNF')) mappedStatus = 'CNF';
+    else if (activeStatuses.includes('REL')) mappedStatus = 'REL';
+    else if (activeStatuses.includes('DRAFT')) mappedStatus = 'DRAFT';
+  }
 
   let currentStageIndex = statusFlow.indexOf(mappedStatus);
 
@@ -1236,8 +1266,8 @@ export const ProductionOrderDetail: React.FC = () => {
                             style={{ display: 'flex', justifyContent: 'space-between' }}
                             onClick={() => {
                               setShowSapMenuDropdown(false);
-                              const el = document.getElementById('operations-section');
-                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                              setShowOperationSubmenu(false);
+                              handleOperationDetails();
                             }}
                           >
                             <span>Operation Details</span>
@@ -1675,7 +1705,7 @@ export const ProductionOrderDetail: React.FC = () => {
       )}
 
       {/* Routing Operations — Operation Overview */}
-      <div className="sap-card" style={{ marginBottom: '2rem' }}>
+      <div id="operations-section" className="sap-card" style={{ marginBottom: '2rem' }}>
         <div className="sap-card-header" style={{ justifyContent: 'space-between' }}>
           <h3 className="sap-card-title">Routing & Sequence Operations (Operation Overview)</h3>
           {isChangeMode && (
@@ -2928,6 +2958,99 @@ export const ProductionOrderDetail: React.FC = () => {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
               <button className="sap-btn sap-btn-primary" onClick={() => setShowGoodsMovementsModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Operation Details Modal (F7 / Menu -> Operation -> Operation Details) */}
+      {showOperationDetailsModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff', borderRadius: '8px', width: '100%',
+            maxWidth: '1000px', maxHeight: '90vh', display: 'flex',
+            flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              backgroundColor: '#1c2430', color: '#ffffff', padding: '1rem 1.5rem',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>
+                  Operation Details — Production Order {order.orderNumber}
+                </h3>
+                <span style={{ fontSize: '0.75rem', color: '#adb5bd' }}>
+                  Routing & Sequence Operations (SAP CO03 / F7)
+                </span>
+              </div>
+              <button
+                onClick={() => setShowOperationDetailsModal(false)}
+                style={{ backgroundColor: 'transparent', border: 'none', color: '#ffffff', fontSize: '1.25rem', cursor: 'pointer', fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div style={{ padding: '1.5rem', overflowY: 'auto' }}>
+              {order.operations?.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>
+                  No operations found for Production Order {order.orderNumber}.
+                </div>
+              ) : (
+                <div className="sap-table-container">
+                  <table className="sap-table" style={{ fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '70px' }}>Op</th>
+                        <th style={{ width: '60px' }}>SOp</th>
+                        <th>Operation Description</th>
+                        <th>Work Center</th>
+                        <th>Std Time</th>
+                        <th>Spent Time</th>
+                        <th>Yield Qty</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {order.operations?.map((op: any) => (
+                        <tr key={op.ID}>
+                          <td style={{ fontWeight: 700, color: '#0a6ed1' }}>
+                            {String(op.sequence || 10).padStart(4, '0')}
+                          </td>
+                          <td style={{ color: '#94a3b8' }}>0000</td>
+                          <td style={{ fontWeight: 600 }}>{op.description}</td>
+                          <td>
+                            <span style={{ fontWeight: 600, color: '#334155' }}>
+                              {op.workCenter?.code || op.workCenter?.name || op.workCenter_ID || '-'}
+                            </span>
+                          </td>
+                          <td>{parseFloat(op.standardTime || 0).toFixed(0)} {op.timeUnit || 'MIN'}</td>
+                          <td>{parseFloat(op.confirmedTime || 0).toFixed(0)} {op.timeUnit || 'MIN'}</td>
+                          <td style={{ color: '#2b7c2b', fontWeight: 700 }}>
+                            {parseFloat(op.yieldQty || 0).toFixed(0)} PC
+                          </td>
+                          <td>
+                            <span className={`sap-badge sap-badge-${op.status}`}>{op.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', backgroundColor: '#f8fafc' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setShowOperationDetailsModal(false)}>
+                Close
+              </button>
             </div>
           </div>
         </div>

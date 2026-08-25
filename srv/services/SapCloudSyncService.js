@@ -99,6 +99,9 @@ class SapCloudSyncService {
       if (formattedPayload.MfgOrderScheduledEndDate) {
         formattedPayload.MfgOrderScheduledEndDate = this._formatSapDate(formattedPayload.MfgOrderScheduledEndDate);
       }
+      if (formattedPayload.TotalQuantity !== undefined && formattedPayload.TotalQuantity !== null) {
+        formattedPayload.TotalQuantity = String(formattedPayload.TotalQuantity);
+      }
 
       const dataStr = JSON.stringify(formattedPayload);
 

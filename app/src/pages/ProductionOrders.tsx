@@ -1046,9 +1046,14 @@ export const ProductionOrders: React.FC = () => {
                     <td>{parseFloat(o.deliveredQty).toFixed(0)} PC</td>
                     <td>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxWidth: '240px' }}>
-                        {(o.status || '').split(' ').map((st: string) => (
-                          <span key={st} className={`sap-badge sap-badge-${st}`}>{st}</span>
-                        ))}
+                        {(() => {
+                          const displayStep = o.portalWorkflowStep || o.status || 'CRTD';
+                          return (
+                            <span className={`sap-badge sap-badge-${displayStep}`}>
+                              {displayStep}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </td>
                     <td>{o.plannedStartDate}</td>

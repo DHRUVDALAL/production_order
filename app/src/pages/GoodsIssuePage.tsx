@@ -516,6 +516,11 @@ export const GoodsIssuePage: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: ['giCurrentOrderData'] });
         queryClient.invalidateQueries({ queryKey: ['giCurrentPOData'] });
         queryClient.invalidateQueries({ queryKey: ['giCurrentMatDocData'] });
+        queryClient.invalidateQueries({ queryKey: ['giOrdersList'] });
+        queryClient.invalidateQueries({ queryKey: ['orderDetail'] });
+        queryClient.invalidateQueries({ queryKey: ['orders'] });
+        queryClient.invalidateQueries({ queryKey: ['productionOrders'] });
+        queryClient.invalidateQueries({ queryKey: ['statusChanges'] });
         refetchMovements();
       } else {
         setValidationErrors(data.errors && data.errors.length > 0 ? data.errors : [data.message || 'Posting failed']);

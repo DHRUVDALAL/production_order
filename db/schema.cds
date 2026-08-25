@@ -115,6 +115,7 @@ entity ProductionOrders : cuid, managed {
     confirmedQty    : Decimal(15, 3) default 0;
     deliveredQty    : Decimal(15, 3) default 0;
     status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
+    portalWorkflowStep : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, GI, CNF, GR, TECO, CLSD
     orderType       : String(4) default 'ZPPS';
     scheduledStartDate   : DateTime;
     scheduledEndDate     : DateTime;

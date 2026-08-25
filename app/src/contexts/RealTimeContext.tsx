@@ -52,17 +52,29 @@ export const RealTimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const wsUrl = `${protocol}//${window.location.hostname}:4004/ws/production-orders`;
     let socket: WebSocket | null = null;
     let reconnectTimer: any = null;
+    let isUnmounted = false;
 
     const connect = () => {
+      if (isUnmounted) return;
+
       try {
+        if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
+          return;
+        }
+
         socket = new WebSocket(wsUrl);
 
         socket.onopen = () => {
+          if (isUnmounted) {
+            socket?.close();
+            return;
+          }
           console.log('[WebSocket Client]: Connected to S/4HANA Real-Time Event Sync Engine');
           setIsConnected(true);
         };
 
         socket.onmessage = (event) => {
+          if (isUnmounted) return;
           try {
             const data: RealTimeEvent = JSON.parse(event.data);
             const clientReceivedTimestamp = new Date().toISOString();
@@ -88,25 +100,32 @@ export const RealTimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         socket.onclose = () => {
           setIsConnected(false);
-          console.log('[WebSocket Client]: Disconnected. Reconnecting in 3 seconds...');
-          reconnectTimer = setTimeout(connect, 3000);
+          if (!isUnmounted) {
+            console.log('[WebSocket Client]: Disconnected. Reconnecting in 3 seconds...');
+            reconnectTimer = setTimeout(connect, 3000);
+          }
         };
 
         socket.onerror = (err) => {
           console.error('[WebSocket Client]: Error observed:', err);
-          socket?.close();
         };
       } catch (err) {
         console.error('[WebSocket Client]: Connection exception:', err);
-        reconnectTimer = setTimeout(connect, 3000);
+        if (!isUnmounted) {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
       }
     };
 
     connect();
 
     return () => {
+      isUnmounted = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (socket) socket.close();
+      if (socket) {
+        socket.onclose = null; // Prevent onclose reconnect trigger during unmount
+        socket.close();
+      }
     };
   }, []);
 

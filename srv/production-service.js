@@ -1895,8 +1895,8 @@ this.on('technicallyCompleteOrder', async (req) => {
         return req.error(400, 'Technical Completion is not available because this order is already closed.');
     }
 
-    // Step 1: Call SAP S/4HANA Public Cloud Function Import
-    const sapRes = await sapCloudSync.callFunctionImport(order.orderNumber, 'TechnicallyComplete');
+    // Step 1: Call SAP S/4HANA Public Cloud Function Import (TechlyCmpltOrder)
+    const sapRes = await sapCloudSync.callFunctionImport(order.orderNumber, 'TechlyCmpltOrder');
     if (!sapRes.success) {
         return req.error(400, `Technical Completion could not be completed: ${sapRes.error || 'SAP OData call failed'}`);
     }

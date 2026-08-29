@@ -158,19 +158,48 @@ class SapCloudSyncService {
   }
 
   /**
-   * Synchronize order status change to SAP S/4HANA Public Cloud (e.g. REL -> CRTD via RevokeReleaseOrder)
+   * Explicit SAP Production Order Action Mapping Registry (API_PRODUCTION_ORDER_2_SRV)
+   */
+  static SAP_ACTION_MAPPINGS = {
+    TECHNICAL_COMPLETE: {
+      uiLabel: 'Technically Complete (TECO)',
+      sapFunction: 'TechlyCmpltOrder',
+      targetStatus: 'TECO'
+    },
+    REVOKE_TECHNICAL_COMPLETE: {
+      uiLabel: 'Revoke Technical Completion',
+      sapFunction: 'RevokeTechlyCmpltOrder',
+      targetStatus: 'REL'
+    },
+    CLOSE_ORDER: {
+      uiLabel: 'Close Order (CLSD)',
+      sapFunction: 'CloseOrder',
+      targetStatus: 'CLSD'
+    },
+    REVOKE_CLOSE_ORDER: {
+      uiLabel: 'Revoke Close Order',
+      sapFunction: 'RevokeCloseOrder',
+      targetStatus: 'TECO'
+    },
+    RELEASE_ORDER: {
+      uiLabel: 'Release Production Order (REL)',
+      sapFunction: 'ReleaseOrder',
+      targetStatus: 'REL'
+    }
+  };
+
+  /**
+   * Synchronize order status change to SAP S/4HANA Public Cloud
    */
   async syncStatusToSap(orderNumber, targetStatus) {
     console.log(`[SAP CLOUD SYNC] Propagating status change for order ${orderNumber} -> ${targetStatus} to SAP Public Cloud...`);
     try {
       if (targetStatus === 'CRTD') {
-        // API_PRODUCTION_ORDER_2_SRV does not expose a standalone RevokeRelease function import.
-        // Status reversion to CRTD is synchronized via basic dates PATCH on A_ProductionOrder_2.
         return { success: true, targetStatus: 'CRTD' };
       } else if (targetStatus === 'REL') {
         return await this.callFunctionImport(orderNumber, 'ReleaseOrder');
       } else if (targetStatus === 'TECO') {
-        return await this.callFunctionImport(orderNumber, 'TechnicallyComplete');
+        return await this.callFunctionImport(orderNumber, 'TechlyCmpltOrder');
       } else if (targetStatus === 'CLSD') {
         return await this.callFunctionImport(orderNumber, 'CloseOrder');
       }
@@ -182,12 +211,22 @@ class SapCloudSyncService {
   }
 
   /**
-   * Send a POST Function Import request (ReleaseOrder, RevokeReleaseOrder, CheckAvailability, TECO, CloseOrder)
+   * Send a POST Function Import request (TechlyCmpltOrder, CloseOrder, ReleaseOrder, etc.)
    */
-  async callFunctionImport(orderNumber, functionName) {
+  async callFunctionImport(orderNumber, functionKeyOrName) {
     try {
+      // Resolve function name using explicit mapping registry if a key was provided
+      let sapFunctionName = functionKeyOrName;
+      if (SapCloudSyncService.SAP_ACTION_MAPPINGS[functionKeyOrName]) {
+        sapFunctionName = SapCloudSyncService.SAP_ACTION_MAPPINGS[functionKeyOrName].sapFunction;
+      } else if (functionKeyOrName === 'TechnicallyComplete') {
+        // Enforce replacement of legacy incorrect endpoint
+        sapFunctionName = 'TechlyCmpltOrder';
+      }
+
+      // STEP 1: Fetch fresh SAP context to retrieve current ETag, CSRF token, and cookies
       const ctx = await this._fetchSapContext(orderNumber);
-      const path = `/sap/opu/odata/sap/API_PRODUCTION_ORDER_2_SRV/${functionName}?ManufacturingOrder='${encodeURIComponent(orderNumber)}'`;
+      const path = `/sap/opu/odata/sap/API_PRODUCTION_ORDER_2_SRV/${sapFunctionName}?ManufacturingOrder='${encodeURIComponent(orderNumber)}'`;
 
       return new Promise((resolve, reject) => {
         const req = https.request({
@@ -206,13 +245,31 @@ class SapCloudSyncService {
           let body = '';
           res.on('data', chunk => body += chunk);
           res.on('end', () => {
+            const timestamp = new Date().toISOString();
             if (res.statusCode >= 200 && res.statusCode < 300) {
-              console.log(`[SAP CLOUD SYNC] Function ${functionName} for order ${orderNumber} succeeded on Public Cloud.`);
+              console.log(`[SAP CLOUD SYNC] [${timestamp}] Function ${sapFunctionName} for order ${orderNumber} succeeded (HTTP ${res.statusCode}).`);
               resolve({ success: true, statusCode: res.statusCode });
             } else {
               const cleanErr = this._parseSapErrorMessage(body);
-              console.warn(`[SAP CLOUD SYNC] Function ${functionName} notice (${res.statusCode}): ${cleanErr}`);
-              resolve({ success: false, statusCode: res.statusCode, error: cleanErr });
+              let userFacingError = cleanErr;
+
+              if (res.statusCode === 404 && body.includes('Resource not found for the segment')) {
+                userFacingError = 'SAP integration configuration error: the requested Production Order API function is not available.';
+              } else if (res.statusCode === 412) {
+                userFacingError = 'Order data was modified concurrently in SAP. Please retry with latest state.';
+              } else if (res.statusCode === 401 || res.statusCode === 403) {
+                userFacingError = 'SAP authorization error: insufficient privileges for action.';
+              }
+
+              console.error(`[SAP CLOUD SYNC LOG] [${timestamp}]
+  Order Number : ${orderNumber}
+  Service Name : API_PRODUCTION_ORDER_2_SRV
+  HTTP Method  : POST
+  Path         : ${path}
+  HTTP Status  : ${res.statusCode}
+  SAP Message  : ${cleanErr}`);
+
+              resolve({ success: false, statusCode: res.statusCode, error: userFacingError, rawSapError: cleanErr });
             }
           });
         });
@@ -221,7 +278,7 @@ class SapCloudSyncService {
         req.end();
       });
     } catch (err) {
-      console.warn(`[SAP CLOUD SYNC] ${functionName} exception for ${orderNumber}:`, err.message);
+      console.warn(`[SAP CLOUD SYNC] ${functionKeyOrName} exception for ${orderNumber}:`, err.message);
       return { success: false, error: err.message };
     }
   }

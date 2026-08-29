@@ -15,8 +15,6 @@ export const GoodsIssuePage: React.FC = () => {
   // Action and Reference Header State
   const [transType, setTransType] = useState<string>('Goods Issue'); // Default A07
   const [refType, setRefType] = useState<string>('Order'); // Default R08
-  const [docInputNumber, setDocInputNumber] = useState<string>(''); // Order # / PO # / MatDoc #
-  
   const todayStr = new Date().toISOString().split('T')[0];
   const [docYearInput] = useState<string>('2026');
 
@@ -58,8 +56,8 @@ export const GoodsIssuePage: React.FC = () => {
 
   // Label helper
   const getDocInputLabel = () => {
+    if (currentActionCode === 'A03' || currentActionCode === 'A04' || currentRefCode === 'R02') return 'Document No.:';
     if (currentRefCode === 'R01') return 'Purchase Order:';
-    if (currentRefCode === 'R02') return 'Material Document:';
     if (currentRefCode === 'R09') return 'Reservation:';
     if (currentRefCode === 'R10') return 'Ref Document:';
     return 'Order Number:';
@@ -118,6 +116,12 @@ export const GoodsIssuePage: React.FC = () => {
   // Reset document state when action or reference changes
   const handleActionChange = (newAction: string) => {
     setTransType(newAction);
+    const newActionCode = actionCodeMap[newAction];
+    if (newActionCode === 'A03' || newActionCode === 'A04') {
+      setRefType('Material Document');
+    } else if (newActionCode === 'A07' || newActionCode === 'A01') {
+      setRefType('Order');
+    }
     setRawDocInput('');
     setActiveDocNumber('');
     setItems([]);
@@ -205,15 +209,15 @@ export const GoodsIssuePage: React.FC = () => {
     enabled: !!activeDocNumber && currentRefCode === 'R01'
   });
 
-  // Query details when reference is Material Document (R02)
+  // Query details when reference is Material Document (R02) or Action is A03/A04
   const { data: currentMatDocData } = useQuery({
     queryKey: ['giCurrentMatDocData', activeDocNumber],
     queryFn: async () => {
-      if (!activeDocNumber || currentRefCode !== 'R02') return null;
+      if (!activeDocNumber || (currentRefCode !== 'R02' && currentActionCode !== 'A03' && currentActionCode !== 'A04')) return null;
       const res = await api.get(`/odata/v4/production/GoodsMovements?$filter=movementNumber eq '${activeDocNumber}'&$expand=order,purchaseOrder,material,plant,storageLocation`);
       return res.data?.value || [];
     },
-    enabled: !!activeDocNumber && currentRefCode === 'R02'
+    enabled: !!activeDocNumber && (currentRefCode === 'R02' || currentActionCode === 'A03' || currentActionCode === 'A04')
   });
 
   // Handle URL param initialization
@@ -411,8 +415,8 @@ export const GoodsIssuePage: React.FC = () => {
       }
     }
 
-    // 4. A03 (Cancellation) + R02 (Material Document)
-    else if (currentActionCode === 'A03' && currentRefCode === 'R02') {
+    // 4. A03 (Cancellation)
+    else if (currentActionCode === 'A03') {
       if (currentMatDocData && currentMatDocData.length > 0) {
         const formatted = currentMatDocData.map((m: any, idx: number) => ({
           line: idx + 1,
@@ -436,6 +440,9 @@ export const GoodsIssuePage: React.FC = () => {
         if (currentMatDocData.some((m: any) => m.isCancelled)) {
           setValidationErrors([`Material Document ${activeDocNumber} is already cancelled.`]);
         }
+      } else if (activeDocNumber && !currentMatDocData?.length) {
+        setItems([]);
+        setValidationErrors([`Material Document ${activeDocNumber} not found.`]);
       }
     }
 
@@ -680,7 +687,8 @@ export const GoodsIssuePage: React.FC = () => {
                     key={po.ID}
                     onClick={() => {
                       setRefType('Purchase Order');
-                      setDocInputNumber(po.poNumber);
+                      setRawDocInput(po.poNumber);
+                      triggerDocumentLookup(po.poNumber);
                     }}
                     style={{ 
                       padding: '2px 6px', 
@@ -714,6 +722,9 @@ export const GoodsIssuePage: React.FC = () => {
                   <div 
                     key={ord.ID}
                     onClick={() => {
+                      if (currentActionCode === 'A03' || currentActionCode === 'A04') {
+                        setTransType('Goods Issue');
+                      }
                       setRefType('Order');
                       setRawDocInput(ord.orderNumber);
                       triggerDocumentLookup(ord.orderNumber);
@@ -744,22 +755,23 @@ export const GoodsIssuePage: React.FC = () => {
               <Folder size={14} color="#0a6ed1" />
               <span>Material Documents</span>
             </div>
-            {treeExpanded.matDocs && (
+            {(treeExpanded.matDocs || currentActionCode === 'A03' || currentActionCode === 'A04' || currentRefCode === 'R02') && (
               <div style={{ marginLeft: '1.25rem', marginTop: '2px', maxHeight: '160px', overflowY: 'auto' }}>
                 {allMovements?.map((mvt: any) => (
                   <div 
                     key={mvt.ID}
                     onClick={() => {
                       setRefType('Material Document');
-                      setDocInputNumber(mvt.movementNumber);
+                      setRawDocInput(mvt.movementNumber);
+                      triggerDocumentLookup(mvt.movementNumber);
                     }}
                     style={{ 
                       padding: '2px 6px', 
                       cursor: 'pointer',
                       borderRadius: '2px',
-                      backgroundColor: (currentRefCode === 'R02' && activeDocNumber === mvt.movementNumber) ? '#e5f0fa' : 'transparent',
-                      color: (currentRefCode === 'R02' && activeDocNumber === mvt.movementNumber) ? '#0a6ed1' : '#444',
-                      fontWeight: (currentRefCode === 'R02' && activeDocNumber === mvt.movementNumber) ? 600 : 'normal'
+                      backgroundColor: ((currentRefCode === 'R02' || currentActionCode === 'A03' || currentActionCode === 'A04') && activeDocNumber === mvt.movementNumber) ? '#e5f0fa' : 'transparent',
+                      color: ((currentRefCode === 'R02' || currentActionCode === 'A03' || currentActionCode === 'A04') && activeDocNumber === mvt.movementNumber) ? '#0a6ed1' : '#444',
+                      fontWeight: ((currentRefCode === 'R02' || currentActionCode === 'A03' || currentActionCode === 'A04') && activeDocNumber === mvt.movementNumber) ? 600 : 'normal'
                     }}
                   >
                     {mvt.movementNumber} ({mvt.movementType})

@@ -300,27 +300,8 @@ export default class ProductionService extends cds.ApplicationService {
                             .where({ orderNumber: sapOrder.ManufacturingOrder });
 
                         const sapOrderStatus = deriveOrderStatus(sapOrder);
+                        // SAP Public Cloud is the absolute source of truth for production order status
                         let effectiveStatus = sapOrderStatus;
-
-                        if (existing) {
-                            // Reconcile against movement ledger and local status changes
-                            const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: existing.ID });
-                            const gr101Qty = (movements || [])
-                                .filter(m => m.movementType === '101' && !m.isCancelled)
-                                .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
-                            const gr102Qty = (movements || [])
-                                .filter(m => m.movementType === '102')
-                                .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
-                            const netReceivedQty = Math.max(0, gr101Qty - gr102Qty);
-                            const targetQty = parseFloat(sapOrder.TotalQuantity) || parseFloat(existing.targetQty) || 0;
-
-                            // Preserve existing status if SAP header status flags are not returned/empty, or if local status is advanced
-                            if (existing.status && existing.status !== 'CRTD' && sapOrderStatus === 'CRTD' && !isSet(sapOrder.OrderIsCreated) && !isSet(sapOrder.OrderIsReleased)) {
-                                effectiveStatus = existing.status;
-                            } else if (existing.status === 'GR' || existing.status === 'PDLV' || (targetQty > 0 && netReceivedQty < targetQty && existing.status !== 'TECO' && existing.status !== 'CLSD')) {
-                                effectiveStatus = existing.status;
-                            }
-                        }
 
                         // Reconcile portalWorkflowStep for UI display
                         const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: existing?.ID || null });
@@ -348,11 +329,13 @@ export default class ProductionService extends cds.ApplicationService {
                         let portalStep = 'CRTD';
                         if (effectiveStatus === 'CLSD') portalStep = 'CLSD';
                         else if (effectiveStatus === 'TECO') portalStep = 'TECO';
+                        else if (effectiveStatus === 'CNF') portalStep = 'CNF';
+                        else if (effectiveStatus === 'PCNF') portalStep = 'CNF';
                         else if (netReceivedQty > 0) portalStep = 'GR';
                         else if (confirmedQty > 0) portalStep = 'CNF';
                         else if (hasIssuedComponents) portalStep = 'GI';
                         else if (['REL', 'MACA', 'CRTD'].includes(effectiveStatus)) portalStep = effectiveStatus === 'CRTD' ? 'CRTD' : 'REL';
-                        else portalStep = 'REL';
+                        else portalStep = effectiveStatus;
 
                         const orderData = {
                             orderNumber     : sapOrder.ManufacturingOrder,

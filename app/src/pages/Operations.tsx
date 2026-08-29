@@ -36,11 +36,11 @@ export const Operations: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Fetch orders that are in STRT (Started) or PCNF (Partially Confirmed) status
+  // Fetch orders that are in active production stages (REL, STRT, GI, PCNF, PDLV)
   const { data: activeOrders, isLoading } = useQuery({
     queryKey: ['activeOrdersList'],
     queryFn: async () => {
-      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'REL' or status eq 'STRT' or status eq 'PCNF'&$expand=material,operations($orderby=sequence asc;$expand=workCenter)");
+      const res = await api.get("/odata/v4/production/ProductionOrders?$filter=status eq 'REL' or status eq 'STRT' or status eq 'GI' or status eq 'PCNF' or status eq 'PDLV'&$expand=material,operations($orderby=sequence asc;$expand=workCenter)");
       return res.data?.value || [];
     }
   });
@@ -174,8 +174,11 @@ export const Operations: React.FC = () => {
             onChange={e => setStatusFilter(e.target.value)}
           >
             <option value="ALL">All Active Orders</option>
+            <option value="REL">Released (REL)</option>
             <option value="STRT">Started (STRT)</option>
+            <option value="GI">Goods Issued (GI)</option>
             <option value="PCNF">Partially Confirmed (PCNF)</option>
+            <option value="PDLV">Partially Delivered (PDLV)</option>
           </select>
         </div>
 
@@ -231,7 +234,7 @@ export const Operations: React.FC = () => {
                     {order.operations?.map((op: any) => {
                       const priorOps = order.operations.filter((o: any) => o.sequence < op.sequence);
                       const isPriorConfirmed = priorOps.every((o: any) => o.status === 'CNF');
-                      const isConfirmable = isPriorConfirmed && op.status !== 'CNF' && (order.status === 'REL' || order.status === 'STRT' || order.status === 'PCNF');
+                      const isConfirmable = isPriorConfirmed && op.status !== 'CNF' && (order.status === 'REL' || order.status === 'STRT' || order.status === 'GI' || order.status === 'PCNF' || order.status === 'PDLV');
 
                       return (
                         <tr key={op.ID}>

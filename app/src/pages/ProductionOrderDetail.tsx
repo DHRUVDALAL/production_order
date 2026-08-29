@@ -118,6 +118,9 @@ export const ProductionOrderDetail: React.FC = () => {
   const [costModalTitle, setCostModalTitle] = useState<string | null>(null);
   const [costModalContent, setCostModalContent] = useState<any>(null);
 
+  // Components Modal State
+  const [showComponentsModal, setShowComponentsModal] = useState(false);
+
   // Missing Parts Modal State (Goto -> Missing Parts)
   const [missingPartsModalTitle, setMissingPartsModalTitle] = useState<string | null>(null);
   const [missingPartsData, setMissingPartsData] = useState<any>(null);
@@ -1387,8 +1390,8 @@ export const ProductionOrderDetail: React.FC = () => {
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
-              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('SAP Public Cloud requires active production version or BOM explosion for structural component additions.')}>Components</button>
-              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowApiNotice('Operations are determined by SAP routing master data.')}>Operations</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowComponentsModal(true)}>Components</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { document.getElementById('operations-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Operations</button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.25rem', fontSize: '0.85rem' }}>
               <div>
@@ -1626,15 +1629,6 @@ export const ProductionOrderDetail: React.FC = () => {
       {/* SAP Action Bar */}
       <div className="sap-card" style={{ marginBottom: '2rem', padding: '0.5rem 1rem' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'center' }}>
-          
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Functions:</span>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
-          </div>
-          
-          <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
           
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Header:</span>
@@ -2675,6 +2669,102 @@ export const ProductionOrderDetail: React.FC = () => {
                 {reprintOutputMutation.isPending ? 'Scheduling Reprint...' : 'Execute Reprint'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Components Overview Modal */}
+      {showComponentsModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '850px', maxHeight: '85vh', overflowY: 'auto', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.75rem' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#0a6ed1', fontWeight: 700 }}>
+                  Components — Production Order {order?.orderNumber}
+                </h3>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '0.2rem' }}>
+                  Header Material: <strong>{order?.material?.code}</strong> ({order?.material?.description}) • Plant: <strong>{order?.plant?.code || '1102'}</strong> • Target Qty: <strong>{order?.targetQty} {order?.productionUnit || 'PC'}</strong> • Status: <span className={`sap-badge sap-badge-${order?.status}`}>{order?.status}</span>
+                </div>
+              </div>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '4px 10px', fontSize: '0.85rem' }} onClick={() => setShowComponentsModal(false)}>✕ Close</button>
+            </div>
+
+            {isLoading ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b', fontSize: '0.85rem' }}>
+                Loading production order components...
+              </div>
+            ) : !order?.components || order.components.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#64748b', fontSize: '0.85rem' }}>
+                No components found for this production order.
+              </div>
+            ) : (
+              <div className="sap-table-container">
+                <table className="sap-table" style={{ fontSize: '0.82rem' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '50px' }}>Item</th>
+                      <th>Component Code</th>
+                      <th>Description</th>
+                      <th>Req Qty</th>
+                      <th>Withdrawn Qty</th>
+                      <th>Remaining Qty</th>
+                      <th>Unit</th>
+                      <th>Plant / SLoc</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {order.components.map((c: any, idx: number) => {
+                      const reqQty = parseFloat(c.requiredQty || 0);
+                      const issQty = parseFloat(c.issuedQty || 0);
+                      const remQty = Math.max(0, reqQty - issQty);
+                      let calcStatus = 'Open';
+                      let statusBg = '#e8f4fd';
+                      let statusColor = '#0a6ed1';
+
+                      if (c.status === 'ISSD' || (reqQty > 0 && issQty >= reqQty)) {
+                        calcStatus = 'Fully Issued';
+                        statusBg = '#ebfbee';
+                        statusColor = '#2b7c2b';
+                      } else if (issQty > 0) {
+                        calcStatus = 'Partially Issued';
+                        statusBg = '#fff9db';
+                        statusColor = '#f59f00';
+                      } else if (c.status === 'MSPT') {
+                        calcStatus = 'Material Shortage';
+                        statusBg = '#ffe3e3';
+                        statusColor = '#bb0000';
+                      }
+
+                      return (
+                        <tr key={c.ID || idx}>
+                          <td style={{ fontWeight: 600, color: '#475569' }}>{String((idx + 1) * 10).padStart(4, '0')}</td>
+                          <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{c.componentMaterial?.code || c.componentMaterial_ID}</td>
+                          <td>{c.componentMaterial?.description || 'Component Item'}</td>
+                          <td style={{ fontWeight: 600 }}>{reqQty.toFixed(0)}</td>
+                          <td style={{ fontWeight: 600, color: issQty > 0 ? '#2b7c2b' : '#64748b' }}>{issQty.toFixed(0)}</td>
+                          <td style={{ fontWeight: 600, color: remQty > 0 ? '#0a6ed1' : '#64748b' }}>{remQty.toFixed(0)}</td>
+                          <td>{c.unit || 'PC'}</td>
+                          <td>{order?.plant?.code || '1102'} / {c.storageLocation?.code || c.storageLocationCode || 'RAW1'}</td>
+                          <td>
+                            <span style={{
+                              padding: '3px 8px',
+                              borderRadius: '12px',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              backgroundColor: statusBg,
+                              color: statusColor
+                            }}>
+                              {calcStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -119,17 +119,17 @@ export const ShellBar: React.FC = () => {
 };
 
 const RealTimeStatusBadge: React.FC = () => {
-  const { isConnected, lastEvent, triggerSync } = useRealTime();
+  const { isConnected, userFacingEvent, triggerSync } = useRealTime();
   const [showToast, setShowToast] = React.useState(false);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
   React.useEffect(() => {
-    if (lastEvent) {
+    if (userFacingEvent) {
       setShowToast(true);
       const timer = setTimeout(() => setShowToast(false), 4000);
       return () => clearTimeout(timer);
     }
-  }, [lastEvent]);
+  }, [userFacingEvent]);
 
   const handleManualSync = () => {
     setIsRefreshing(true);
@@ -173,14 +173,14 @@ const RealTimeStatusBadge: React.FC = () => {
         <RefreshCw size={13} style={{ marginLeft: '4px', animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
       </button>
 
-      {showToast && lastEvent && (() => {
-        const isManual = lastEvent.source === 'MANUAL_USER_TRIGGER';
+      {showToast && userFacingEvent && (() => {
+        const isManual = userFacingEvent.source === 'MANUAL_USER_TRIGGER';
         const accentColor = isManual ? '#28a745' : '#3b82f6';
         
         let title = isManual ? '✔ Sync Complete' : '⚡ SAP Live Event';
         let message = isManual 
           ? 'Successfully synced with SAP S/4HANA Public Cloud' 
-          : `${lastEvent.eventType.replace('ProductionOrder.', '').replace('sap.s4.beh.productionorder.v1.ProductionOrder.', '')}${lastEvent.orderId ? ` (Order #${lastEvent.orderId})` : ''}`;
+          : `${userFacingEvent.eventType.replace('ProductionOrder.', '').replace('sap.s4.beh.productionorder.v1.ProductionOrder.', '')}${userFacingEvent.orderId ? ` (Order #${userFacingEvent.orderId})` : ''}`;
 
         return (
           <div style={{

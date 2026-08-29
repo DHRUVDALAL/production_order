@@ -301,9 +301,9 @@ export default class ProductionService extends cds.ApplicationService {
 
                         const sapOrderStatus = deriveOrderStatus(sapOrder);
                         // SAP Public Cloud is the absolute source of truth for production order status
-                        let effectiveStatus = sapOrderStatus;
+                        const systemStatus = sapOrderStatus;
 
-                        // Reconcile portalWorkflowStep for UI display
+                        // Reconcile Goods Issue and Goods Receipt Statuses independently
                         const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: existing?.ID || null });
                         const gr101Qty = (movements || [])
                             .filter(m => m.movementType === '101' && !m.isCancelled)
@@ -312,6 +312,7 @@ export default class ProductionService extends cds.ApplicationService {
                             .filter(m => m.movementType === '102')
                             .reduce((sum, m) => sum + (parseFloat(m.quantity) || 0), 0);
                         const netReceivedQty = Math.max(0, gr101Qty - gr102Qty);
+                        const targetQty = parseFloat(sapOrder.TotalQuantity) || 0;
 
                         const gi261Qty = (movements || [])
                             .filter(m => m.movementType === '261' && !m.isCancelled)
@@ -323,28 +324,44 @@ export default class ProductionService extends cds.ApplicationService {
 
                         const confirmedQty = parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || parseFloat(existing?.confirmedQty) || 0;
                         const components = existing?.ID ? (await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: existing.ID })) : [];
+                        const totalCompRequired = (components || []).reduce((sum, c) => sum + (parseFloat(c.requiredQty) || 0), 0);
                         const totalCompIssued = (components || []).reduce((sum, c) => sum + (parseFloat(c.issuedQty) || 0), 0);
-                        const hasIssuedComponents = totalCompIssued > 0 || netIssuedQty > 0;
 
-                        let portalStep = 'CRTD';
-                        if (effectiveStatus === 'CLSD') portalStep = 'CLSD';
-                        else if (effectiveStatus === 'TECO') portalStep = 'TECO';
-                        else if (effectiveStatus === 'CNF') portalStep = 'CNF';
-                        else if (effectiveStatus === 'PCNF') portalStep = 'CNF';
+                        // Goods Issue Status calculation
+                        let goodsIssueStatus = 'NOT_POSTED';
+                        if (totalCompIssued >= totalCompRequired && totalCompRequired > 0) {
+                            goodsIssueStatus = 'POSTED';
+                        } else if (totalCompIssued > 0 || netIssuedQty > 0) {
+                            goodsIssueStatus = (totalCompRequired > 0 && totalCompIssued < totalCompRequired) ? 'PARTIAL' : 'POSTED';
+                        }
+
+                        // Goods Receipt Status calculation
+                        let goodsReceiptStatus = 'NOT_POSTED';
+                        if (netReceivedQty >= targetQty && targetQty > 0) {
+                            goodsReceiptStatus = 'POSTED';
+                        } else if (netReceivedQty > 0) {
+                            goodsReceiptStatus = 'PARTIAL';
+                        }
+
+                        let portalStep = systemStatus;
+                        if (['CLSD', 'TECO', 'CNF', 'PCNF'].includes(systemStatus)) portalStep = systemStatus === 'PCNF' ? 'CNF' : systemStatus;
                         else if (netReceivedQty > 0) portalStep = 'GR';
                         else if (confirmedQty > 0) portalStep = 'CNF';
-                        else if (hasIssuedComponents) portalStep = 'GI';
-                        else if (['REL', 'MACA', 'CRTD'].includes(effectiveStatus)) portalStep = effectiveStatus === 'CRTD' ? 'CRTD' : 'REL';
-                        else portalStep = effectiveStatus;
+                        else if (totalCompIssued > 0 || netIssuedQty > 0) portalStep = 'GI';
+                        else if (['REL', 'MACA', 'CRTD'].includes(systemStatus)) portalStep = systemStatus === 'CRTD' ? 'CRTD' : 'REL';
 
                         const orderData = {
                             orderNumber     : sapOrder.ManufacturingOrder,
                             material_ID     : mat?.ID || null,
                             plant_ID        : plantId,
                             storageLocation_ID: sloc?.ID || null,
-                            targetQty       : parseFloat(sapOrder.TotalQuantity) || 0,
+                            targetQty       : targetQty,
                             confirmedQty    : confirmedQty,
-                            status          : effectiveStatus,
+                            deliveredQty    : netReceivedQty,
+                            status          : systemStatus,
+                            systemStatus    : systemStatus,
+                            goodsIssueStatus: goodsIssueStatus,
+                            goodsReceiptStatus: goodsReceiptStatus,
                             portalWorkflowStep: portalStep,
                             plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                             plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
@@ -1779,6 +1796,257 @@ this.on('scheduleOrder', async (req) => {
             scheduledRelease: scheduledRelease.toISOString().split('T')[0]
         };
     }
+});
+
+// ----------------------------------------------------------------
+// ACTION: Get Action Eligibility for Production Order Lifecycle
+// ----------------------------------------------------------------
+this.on('getActionEligibility', async (req) => {
+    const { orderId } = req.data;
+    const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    // Live Read from SAP S/4HANA Public Cloud if available
+    let sapData = null;
+    if (order.orderNumber) {
+        const sapRes = await sapCloudSync.fetchOrderFromSap(order.orderNumber);
+        if (sapRes.success && sapRes.data) {
+            sapData = sapRes.data;
+        }
+    }
+
+    const currentSystemStatus = order.systemStatus || order.status || 'CRTD';
+
+    // 1. Technical Completion Eligibility (TECO)
+    let canTeco = true;
+    let tecoReason = null;
+    if (currentSystemStatus === 'TECO') {
+        canTeco = false;
+        tecoReason = 'Order is already technically completed.';
+    } else if (currentSystemStatus === 'CLSD') {
+        canTeco = false;
+        tecoReason = 'Order is already closed.';
+    } else if (currentSystemStatus === 'DRAFT') {
+        canTeco = false;
+        tecoReason = 'Draft orders cannot be technically completed.';
+    }
+
+    // 2. Revoke Technical Completion Eligibility
+    let canRevokeTeco = currentSystemStatus === 'TECO';
+    let revokeReason = canRevokeTeco ? null : 'Order is not technically completed.';
+
+    // 3. Close Production Order Eligibility (CLSD)
+    const closeReasons = [];
+    const closeChecks = {
+        eligibleStatus: ['TECO', 'REL', 'CNF', 'PCNF'].includes(currentSystemStatus),
+        orderBalanceCleared: true,
+        openCommitments: true,
+        purchaseRequirements: 'UNKNOWN',
+        futureConfirmationChanges: true
+    };
+
+    if (!closeChecks.eligibleStatus) {
+        closeReasons.push(`Order status (${currentSystemStatus}) is not eligible for closing. Must be REL or TECO.`);
+    }
+
+    // Check financial order balance if OrderCosts record exists
+    const orderCosts = await SELECT.one.from('sap.production.portal.OrderCosts').where({ order_ID: order.ID });
+    if (orderCosts && Math.abs(parseFloat(orderCosts.orderBalance) || 0) > 0.01) {
+        closeChecks.orderBalanceCleared = false;
+        closeReasons.push(`Order balance (${orderCosts.orderBalance} ${orderCosts.currency || 'USD'}) has not been cleared/settled.`);
+    }
+
+    const canClose = closeReasons.length === 0;
+
+    return {
+        orderNumber: order.orderNumber,
+        systemStatus: currentSystemStatus,
+        actions: {
+            technicalCompletion: {
+                allowed: canTeco,
+                reason: tecoReason
+            },
+            revokeTechnicalCompletion: {
+                allowed: canRevokeTeco,
+                reason: revokeReason
+            },
+            closeOrder: {
+                allowed: canClose,
+                reasons: closeReasons,
+                checks: closeChecks
+            }
+        }
+    };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Technically Complete Production Order (TECO)
+// ----------------------------------------------------------------
+this.on('technicallyCompleteOrder', async (req) => {
+    const { orderId } = req.data;
+    const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    const previousStatus = order.systemStatus || order.status || 'CRTD';
+    if (previousStatus === 'TECO') {
+        return req.error(400, 'Technical Completion is not available because this order is already technically completed.');
+    }
+    if (previousStatus === 'CLSD') {
+        return req.error(400, 'Technical Completion is not available because this order is already closed.');
+    }
+
+    // Step 1: Call SAP S/4HANA Public Cloud Function Import
+    const sapRes = await sapCloudSync.callFunctionImport(order.orderNumber, 'TechnicallyComplete');
+    if (!sapRes.success) {
+        return req.error(400, `Technical Completion could not be completed: ${sapRes.error || 'SAP OData call failed'}`);
+    }
+
+    // Step 2: Fetch latest SAP order state after SAP confirms success
+    const freshSapData = await sapCloudSync.fetchOrderFromSap(order.orderNumber);
+    const finalSystemStatus = freshSapData.success && freshSapData.data?.OrderIsTechnicallyCompleted === 'X' ? 'TECO' : 'TECO';
+
+    // Step 3: Update local database
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({
+            status: finalSystemStatus,
+            systemStatus: finalSystemStatus,
+            portalWorkflowStep: 'TECO'
+        })
+        .where({ ID: order.ID });
+
+    // Step 4: Write Audit Log
+    try {
+        await INSERT.into('sap.production.portal.AuditLogs').entries({
+            ID: cds.utils.uuid(),
+            user_ID: req.headers['x-user-id'] || null,
+            action: 'TECHNICAL_COMPLETION',
+            entityName: 'ProductionOrders',
+            entityId: order.ID,
+            oldValues: JSON.stringify({ orderNumber: order.orderNumber, status: previousStatus }),
+            newValues: JSON.stringify({ orderNumber: order.orderNumber, status: finalSystemStatus, result: 'SUCCESS' })
+        });
+    } catch (e) {}
+
+    // Step 5: Broadcast WebSocket / SSE event
+    broadcastEvent({
+        source: 'SAP_PRODUCTION_SERVICE',
+        eventType: 'ProductionOrder.StatusChanged',
+        orderNumber: order.orderNumber,
+        status: finalSystemStatus,
+        timestamp: new Date().toISOString()
+    });
+
+    return {
+        success: true,
+        orderNumber: order.orderNumber,
+        systemStatus: finalSystemStatus,
+        message: `Production Order ${order.orderNumber} was technically completed successfully.`
+    };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Revoke Technical Completion
+// ----------------------------------------------------------------
+this.on('revokeTechnicalCompletion', async (req) => {
+    const { orderId } = req.data;
+    const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    const previousStatus = order.systemStatus || order.status || 'CRTD';
+    if (previousStatus !== 'TECO') {
+        return req.error(400, 'Revoke Technical Completion is only allowed when order status is TECO.');
+    }
+
+    const sapRes = await sapCloudSync.callFunctionImport(order.orderNumber, 'RevokeTechnicallyComplete');
+    if (!sapRes.success) {
+        return req.error(400, `Revoke Technical Completion failed on SAP: ${sapRes.error || 'SAP call failed'}`);
+    }
+
+    const finalSystemStatus = 'REL';
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({
+            status: finalSystemStatus,
+            systemStatus: finalSystemStatus,
+            portalWorkflowStep: 'REL'
+        })
+        .where({ ID: order.ID });
+
+    return {
+        success: true,
+        orderNumber: order.orderNumber,
+        systemStatus: finalSystemStatus,
+        message: `Technical Completion revoked for Production Order ${order.orderNumber}.`
+    };
+});
+
+// ----------------------------------------------------------------
+// ACTION: Close Production Order (CLSD)
+// ----------------------------------------------------------------
+this.on('closeProductionOrder', async (req) => {
+    const { orderId } = req.data;
+    const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    const previousStatus = order.systemStatus || order.status || 'CRTD';
+    if (previousStatus === 'CLSD') {
+        return req.error(400, 'Production Order is already closed.');
+    }
+
+    // Evaluate close prerequisite checks
+    if (!['TECO', 'REL', 'CNF', 'PCNF'].includes(previousStatus)) {
+        return req.error(400, `Production Order cannot be closed from status ${previousStatus}. Order must be REL or TECO.`);
+    }
+
+    const orderCosts = await SELECT.one.from('sap.production.portal.OrderCosts').where({ order_ID: order.ID });
+    if (orderCosts && Math.abs(parseFloat(orderCosts.orderBalance) || 0) > 0.01) {
+        return req.error(400, `Production Order cannot be closed because order balance (${orderCosts.orderBalance} ${orderCosts.currency || 'USD'}) has not been cleared.`);
+    }
+
+    // Call SAP Function Import CloseOrder
+    const sapRes = await sapCloudSync.callFunctionImport(order.orderNumber, 'CloseOrder');
+    if (!sapRes.success) {
+        return req.error(400, `Production Order could not be closed because SAP closing requirements have not been fulfilled: ${sapRes.error || 'SAP OData error'}`);
+    }
+
+    const freshSapData = await sapCloudSync.fetchOrderFromSap(order.orderNumber);
+    const finalSystemStatus = 'CLSD';
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({
+            status: finalSystemStatus,
+            systemStatus: finalSystemStatus,
+            portalWorkflowStep: 'CLSD'
+        })
+        .where({ ID: order.ID });
+
+    // Write Audit Log
+    try {
+        await INSERT.into('sap.production.portal.AuditLogs').entries({
+            ID: cds.utils.uuid(),
+            user_ID: req.headers['x-user-id'] || null,
+            action: 'CLOSE_ORDER',
+            entityName: 'ProductionOrders',
+            entityId: order.ID,
+            oldValues: JSON.stringify({ orderNumber: order.orderNumber, status: previousStatus }),
+            newValues: JSON.stringify({ orderNumber: order.orderNumber, status: finalSystemStatus, result: 'SUCCESS' })
+        });
+    } catch (e) {}
+
+    broadcastEvent({
+        source: 'SAP_PRODUCTION_SERVICE',
+        eventType: 'ProductionOrder.StatusChanged',
+        orderNumber: order.orderNumber,
+        status: finalSystemStatus,
+        timestamp: new Date().toISOString()
+    });
+
+    return {
+        success: true,
+        orderNumber: order.orderNumber,
+        systemStatus: finalSystemStatus,
+        message: `Production Order ${order.orderNumber} was closed successfully.`
+    };
 });
 
 // ----------------------------------------------------------------

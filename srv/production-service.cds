@@ -175,6 +175,57 @@ service ProductionService {
         status            : String;
     };
 
+    // Get Action Eligibility for Production Order Lifecycle
+    action getActionEligibility(orderId: UUID) returns {
+        orderNumber: String;
+        systemStatus: String;
+        actions: {
+            technicalCompletion: {
+                allowed: Boolean;
+                reason: String;
+            };
+            revokeTechnicalCompletion: {
+                allowed: Boolean;
+                reason: String;
+            };
+            closeOrder: {
+                allowed: Boolean;
+                reasons: array of String;
+                checks: {
+                    eligibleStatus: Boolean;
+                    orderBalanceCleared: Boolean;
+                    openCommitments: Boolean;
+                    purchaseRequirements: String;
+                    futureConfirmationChanges: Boolean;
+                };
+            };
+        };
+    };
+
+    // Technical Completion (TECO)
+    action technicallyCompleteOrder(orderId: UUID) returns {
+        success: Boolean;
+        orderNumber: String;
+        systemStatus: String;
+        message: String;
+    };
+
+    // Revoke Technical Completion
+    action revokeTechnicalCompletion(orderId: UUID) returns {
+        success: Boolean;
+        orderNumber: String;
+        systemStatus: String;
+        message: String;
+    };
+
+    // Close Production Order (CLSD)
+    action closeProductionOrder(orderId: UUID) returns {
+        success: Boolean;
+        orderNumber: String;
+        systemStatus: String;
+        message: String;
+    };
+
     // Get Status Changes history
     action getStatusChanges(orderId: UUID) returns array of {
         oldStatus : String;
@@ -307,9 +358,7 @@ service ProductionService {
     };
 
     // Technically Complete Order & Restrict Processing Actions
-    action technicallyCompleteOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action revokeTechnicalCompletionOrder(orderId: UUID) returns { success: Boolean; status: String; };
-    action closeOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action revokeCloseOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action lockProductionOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action unlockProductionOrder(orderId: UUID) returns { success: Boolean; status: String; };

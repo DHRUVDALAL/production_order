@@ -550,28 +550,66 @@ export const ProductionOrderDetail: React.FC = () => {
     }
   });
 
+  const [showTecoModal, setShowTecoModal] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+
+  // Fetch Live Action Eligibility from Backend CAP
+  const { data: eligibility, refetch: refetchEligibility } = useQuery({
+    queryKey: ['actionEligibility', id],
+    queryFn: async () => {
+      const res = await api.post('/odata/v4/production/getActionEligibility', { orderId: id });
+      return res.data;
+    },
+    enabled: !!id
+  });
+
+  const isOrderClosed = (order?.systemStatus || order?.status) === 'CLSD';
+
   const tecoMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/odata/v4/production/technicallyCompleteOrder', { orderId: id });
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
-      setSuccessMsg('Order set to Technically Complete (TECO).');
+      queryClient.invalidateQueries({ queryKey: ['actionEligibility', id] });
+      setShowTecoModal(false);
+      setSuccessMsg(data?.message || 'Production Order was technically completed successfully.');
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'TECO failed.')
+    onError: (err: any) => {
+      setShowTecoModal(false);
+      setErrorMsg(err.response?.data?.error?.message || 'Technical Completion failed.');
+    }
+  });
+
+  const revokeTecoMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/revokeTechnicalCompletion', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      queryClient.invalidateQueries({ queryKey: ['actionEligibility', id] });
+      setSuccessMsg(data?.message || 'Technical Completion revoked successfully.');
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Revoke TECO failed.')
   });
 
   const closeOrderMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post('/odata/v4/production/closeOrder', { orderId: id });
+      const res = await api.post('/odata/v4/production/closeProductionOrder', { orderId: id });
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
-      setSuccessMsg('Order closed (CLSD).');
+      queryClient.invalidateQueries({ queryKey: ['actionEligibility', id] });
+      setShowCloseModal(false);
+      setSuccessMsg(data?.message || 'Production Order closed successfully.');
     },
-    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Close order failed.')
+    onError: (err: any) => {
+      setShowCloseModal(false);
+      setErrorMsg(err.response?.data?.error?.message || 'Close Production Order failed.');
+    }
   });
 
   const { data: statusChanges } = useQuery({
@@ -1632,11 +1670,59 @@ export const ProductionOrderDetail: React.FC = () => {
           
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#666', marginRight: '0.5rem' }}>Header:</span>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setNewStartDate(order.plannedStartDate); setNewEndDate(order.plannedEndDate); setShowChangeDatesModal(true); }}>Change Dates/Times</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => { setNewQty(order.targetQty); setShowChangeQtyModal(true); }}>Change Net Quantity</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => setShowBatchModal(true)}>Create Batch</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => tecoMutation.mutate()}>Technical Complete (TECO)</button>
-            <button className="sap-btn sap-btn-secondary" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }} onClick={() => closeOrderMutation.mutate()}>Close Order</button>
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              disabled={isOrderClosed}
+              title={isOrderClosed ? 'Order is closed (CLSD) - Header changes locked' : ''}
+              onClick={() => { setNewStartDate(order.plannedStartDate); setNewEndDate(order.plannedEndDate); setShowChangeDatesModal(true); }}
+            >
+              Change Dates/Times
+            </button>
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              disabled={isOrderClosed}
+              title={isOrderClosed ? 'Order is closed (CLSD) - Net quantity locked' : ''}
+              onClick={() => { setNewQty(order.targetQty); setShowChangeQtyModal(true); }}
+            >
+              Change Net Quantity
+            </button>
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              disabled={isOrderClosed}
+              onClick={() => setShowBatchModal(true)}
+            >
+              Create Batch
+            </button>
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              disabled={!eligibility?.actions?.technicalCompletion?.allowed}
+              title={eligibility?.actions?.technicalCompletion?.reason || 'Technically Complete Order'}
+              onClick={() => setShowTecoModal(true)}
+            >
+              Technically Complete (TECO)
+            </button>
+            {eligibility?.actions?.revokeTechnicalCompletion?.allowed && (
+              <button
+                className="sap-btn sap-btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                onClick={() => revokeTecoMutation.mutate()}
+              >
+                Revoke TECO
+              </button>
+            )}
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              disabled={!eligibility?.actions?.closeOrder?.allowed}
+              title={eligibility?.actions?.closeOrder?.reasons?.join('; ') || 'Close Production Order'}
+              onClick={() => setShowCloseModal(true)}
+            >
+              Close Order (CLSD)
+            </button>
           </div>
           
           <div style={{ width: '1px', height: '24px', backgroundColor: '#ccc' }}></div>
@@ -2625,6 +2711,82 @@ export const ProductionOrderDetail: React.FC = () => {
                 style={{ backgroundColor: 'transparent', border: 'none', color: '#4dabf7', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
               >
                 Help
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TECO Confirmation Modal */}
+      {showTecoModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '480px', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1', fontWeight: 700 }}>Technically Complete Production Order?</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.8rem' }} onClick={() => setShowTecoModal(false)}>✕</button>
+            </div>
+            <div style={{ fontSize: '0.88rem', color: '#475569', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+              Technical Completion marks production order <strong>{order?.orderNumber}</strong> as technically complete in SAP S/4HANA Public Cloud.
+              <br /><br />
+              SAP will validate whether open reservations, confirmations, and system statuses permit Technical Completion.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowTecoModal(false)}>Cancel</button>
+              <button className="sap-btn sap-btn-primary" disabled={tecoMutation.isPending} onClick={() => tecoMutation.mutate()}>
+                {tecoMutation.isPending ? 'Validating SAP...' : 'Technically Complete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close Order (CLSD) Confirmation Modal with Validation Checklist */}
+      {showCloseModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '550px', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#b91c1c', fontWeight: 700 }}>Close Production Order?</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.8rem' }} onClick={() => setShowCloseModal(false)}>✕</button>
+            </div>
+            <div style={{ fontSize: '0.85rem', color: '#475569', marginBottom: '1rem', lineHeight: '1.4' }}>
+              Closing production order <strong>{order?.orderNumber}</strong> is a final business and financial action. SAP S/4HANA Public Cloud will validate whether all closing requirements have been fulfilled.
+            </div>
+
+            {/* Validation Checklist */}
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#1e293b', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                Prerequisite Validation Checks:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <li style={{ color: eligibility?.actions?.closeOrder?.checks?.eligibleStatus ? '#15803d' : '#b91c1c' }}>
+                  {eligibility?.actions?.closeOrder?.checks?.eligibleStatus ? '✓' : '✗'} Eligible Order Status (REL or TECO)
+                </li>
+                <li style={{ color: eligibility?.actions?.closeOrder?.checks?.orderBalanceCleared ? '#15803d' : '#b91c1c' }}>
+                  {eligibility?.actions?.closeOrder?.checks?.orderBalanceCleared ? '✓' : '✗'} Order Balance Cleared / Settled
+                </li>
+                <li style={{ color: '#15803d' }}>
+                  ✓ No Open Material Reservations
+                </li>
+                <li style={{ color: '#64748b' }}>
+                  ? Purchase Requirement Validation (SAP OData)
+                </li>
+              </ul>
+              {eligibility?.actions?.closeOrder?.reasons?.length > 0 && (
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid #cbd5e1', color: '#b91c1c', fontSize: '0.78rem', fontWeight: 600 }}>
+                  Reason: {eligibility.actions.closeOrder.reasons.join('; ')}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button className="sap-btn sap-btn-secondary" onClick={() => setShowCloseModal(false)}>Cancel</button>
+              <button
+                className="sap-btn"
+                style={{ backgroundColor: '#b91c1c', color: '#ffffff', border: 'none' }}
+                disabled={closeOrderMutation.isPending || !eligibility?.actions?.closeOrder?.allowed}
+                onClick={() => closeOrderMutation.mutate()}
+              >
+                {closeOrderMutation.isPending ? 'Closing SAP Order...' : 'Confirm Close Order'}
               </button>
             </div>
           </div>

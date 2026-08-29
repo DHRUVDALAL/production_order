@@ -25,6 +25,7 @@ export const ProductionOrders: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>(() => {
     return location.state?.status || 'ALL';
   });
+  const [filterGoodsMovement, setFilterGoodsMovement] = useState<string>('ALL');
   const [filterPlant, setFilterPlant] = useState('ALL');
   const [filterStartDate, setFilterStartDate] = useState('');
   const [filterEndDate, setFilterEndDate] = useState('');
@@ -923,6 +924,7 @@ export const ProductionOrders: React.FC = () => {
               onClick={() => {
                 setSearchQuery('');
                 setFilterStatus('ALL');
+                setFilterGoodsMovement('ALL');
                 setFilterPlant('ALL');
                 setFilterStartDate('');
                 setFilterEndDate('');
@@ -964,8 +966,43 @@ export const ProductionOrders: React.FC = () => {
             </div>
           </div>
 
+          {/* Goods Movement Status Filters Toggle Row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', fontWeight: 600, color: 'var(--sap-text-secondary)' }}>
+              <Layers size={14} />
+              <span>Goods Movement:</span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              {[
+                { id: 'ALL', label: 'ALL' },
+                { id: 'GI_POSTED', label: 'GI Posted' },
+                { id: 'GR_POSTED', label: 'GR Posted' },
+                { id: 'GI_GR_POSTED', label: 'GI & GR Posted' }
+              ].map((gm) => (
+                <button
+                  key={gm.id}
+                  type="button"
+                  onClick={() => setFilterGoodsMovement(gm.id)}
+                  style={{
+                    padding: '3px 8px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--sap-border-color)',
+                    backgroundColor: filterGoodsMovement === gm.id ? '#0f766e' : 'var(--sap-surface-color)',
+                    color: filterGoodsMovement === gm.id ? '#ffffff' : 'var(--sap-text-color)',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all var(--transition-fast)'
+                  }}
+                >
+                  {gm.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Active Filter Chips / Tags */}
-          {(searchQuery || filterStatus !== 'ALL' || filterPlant !== 'ALL' || filterStartDate || filterEndDate) && (
+          {(searchQuery || filterStatus !== 'ALL' || filterGoodsMovement !== 'ALL' || filterPlant !== 'ALL' || filterStartDate || filterEndDate) && (
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.25rem' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--sap-text-secondary)' }}>Active Filters:</span>
               
@@ -980,6 +1017,13 @@ export const ProductionOrders: React.FC = () => {
                 <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                   Status: {filterStatus}
                   <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterStatus('ALL')}>×</span>
+                </span>
+              )}
+
+              {filterGoodsMovement !== 'ALL' && (
+                <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--sap-bg-color)', border: '1px solid var(--sap-border-color)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  GM: {filterGoodsMovement.replace('_', ' ')}
+                  <span style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setFilterGoodsMovement('ALL')}>×</span>
                 </span>
               )}
 
@@ -1045,15 +1089,36 @@ export const ProductionOrders: React.FC = () => {
                     <td>{parseFloat(o.confirmedQty).toFixed(0)} PC</td>
                     <td>{parseFloat(o.deliveredQty).toFixed(0)} PC</td>
                     <td>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxWidth: '240px' }}>
-                        {(() => {
-                          const displayStep = o.portalWorkflowStep || o.status || 'CRTD';
-                          return (
-                            <span className={`sap-badge sap-badge-${displayStep}`}>
-                              {displayStep}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '240px' }}>
+                        {/* Primary SAP Lifecycle Status Badge (TECO, REL, CNF, CLSD, etc.) */}
+                        <div>
+                          <span className={`sap-badge sap-badge-${o.systemStatus || o.status || 'CRTD'}`}>
+                            {o.systemStatus || o.status || 'CRTD'}
+                          </span>
+                        </div>
+                        {/* Secondary Goods Movement Indicators */}
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          {o.goodsIssueStatus === 'POSTED' && (
+                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#e6f4ea', color: '#137333', border: '1px solid #b7e1cd', fontWeight: 600 }}>
+                              GI: Posted
                             </span>
-                          );
-                        })()}
+                          )}
+                          {o.goodsIssueStatus === 'PARTIAL' && (
+                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#fef7e0', color: '#b06000', border: '1px solid #fce8b2', fontWeight: 600 }}>
+                              GI: Partial
+                            </span>
+                          )}
+                          {o.goodsReceiptStatus === 'POSTED' && (
+                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#e8f0fe', color: '#1a73e8', border: '1px solid #aecbfa', fontWeight: 600 }}>
+                              GR: Posted
+                            </span>
+                          )}
+                          {o.goodsReceiptStatus === 'PARTIAL' && (
+                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#fef7e0', color: '#b06000', border: '1px solid #fce8b2', fontWeight: 600 }}>
+                              GR: Partial
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>{o.plannedStartDate}</td>

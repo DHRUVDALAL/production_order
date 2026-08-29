@@ -115,6 +115,9 @@ entity ProductionOrders : cuid, managed {
     confirmedQty    : Decimal(15, 3) default 0;
     deliveredQty    : Decimal(15, 3) default 0;
     status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
+    systemStatus    : String(10) default 'DRAFT'; // Actual SAP Lifecycle Status: DRAFT, CRTD, MACA, REL, PCNF, CNF, TECO, CLSD
+    goodsIssueStatus: String(20) default 'NOT_POSTED'; // NOT_POSTED, PARTIAL, POSTED
+    goodsReceiptStatus: String(20) default 'NOT_POSTED'; // NOT_POSTED, PARTIAL, POSTED
     portalWorkflowStep : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, GI, CNF, GR, TECO, CLSD
     orderType       : String(4) default 'ZPPS';
     scheduledStartDate   : DateTime;

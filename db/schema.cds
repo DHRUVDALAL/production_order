@@ -114,11 +114,14 @@ entity ProductionOrders : cuid, managed {
     targetQty       : Decimal(15, 3);
     confirmedQty    : Decimal(15, 3) default 0;
     deliveredQty    : Decimal(15, 3) default 0;
-    status          : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD
-    systemStatus    : String(10) default 'DRAFT'; // Actual SAP Lifecycle Status: DRAFT, CRTD, MACA, REL, PCNF, CNF, TECO, CLSD
+    status          : String(10) default 'CRTD'; // DRAFT (local pre-creation), CRTD, MACA, REL, STRT, PCNF, CNF, INSP, TECO, CLSD, DLFL
+    systemStatus    : String(10) default 'CRTD'; // Actual SAP Lifecycle Status: CRTD, MACA, REL, PCNF, CNF, TECO, CLSD, DLFL
+    deletionFlag    : Boolean default false; // DLFL flag: blocks Goods Issue and other transactional postings
+    materialAvailabilityStatus : String(20) default 'NOT_CHECKED'; // NOT_CHECKED, AVAILABLE, PARTIALLY_AVAILABLE, NOT_AVAILABLE
+    availabilityLastCheckedAt  : DateTime;
     goodsIssueStatus: String(20) default 'NOT_POSTED'; // NOT_POSTED, PARTIAL, POSTED
     goodsReceiptStatus: String(20) default 'NOT_POSTED'; // NOT_POSTED, PARTIAL, POSTED
-    portalWorkflowStep : String(10) default 'DRAFT'; // DRAFT, CRTD, MACA, REL, GI, CNF, GR, TECO, CLSD
+    portalWorkflowStep : String(10) default 'CRTD'; // CRTD, MACA, REL, GI, CNF, GR, TECO, CLSD
     orderType       : String(4) default 'ZPPS';
     scheduledStartDate   : DateTime;
     scheduledEndDate     : DateTime;
@@ -138,6 +141,9 @@ entity ProductionOrders : cuid, managed {
     plannedEndDate  : Date;
     actualStartDate : DateTime;
     actualEndDate   : DateTime;
+    lastSapSyncAt        : DateTime;
+    lastSapSyncStatus    : String(20) default 'SUCCESS'; // SUCCESS, FAILED, SYNCING, STALE
+    lastSapSyncError     : String(1000);
     operations      : Composition of many OrderOperations on operations.order = $self;
     components      : Composition of many OrderComponents on components.order = $self;
     goodsMovements  : Association to many GoodsMovements on goodsMovements.order = $self;
@@ -280,18 +286,27 @@ entity GoodsMovements : cuid, managed {
 }
 
 entity QualityInspectionLots : cuid, managed {
-    lotNumber      : String(12); // e.g. "040000000001"
-    order          : Association to ProductionOrders;
-    material       : Association to Materials;
-    plant          : Association to Plants;
-    lotQty         : Decimal(15, 3);
-    inspectedQty   : Decimal(15, 3) default 0;
-    approvedQty    : Decimal(15, 3) default 0;
-    rejectedQty    : Decimal(15, 3) default 0;
-    usageDecision  : String(4) default ''; // 'UDAC' (Accept), 'UDRJ' (Reject)
-    status         : String(10) default 'CRTD'; // CRTD, INSP, COMP
-    inspector      : Association to Users;
-    decisionDate   : DateTime;
+    lotNumber          : String(12); // e.g. "030000000001" or "040000000001"
+    order              : Association to ProductionOrders;
+    material           : Association to Materials;
+    plant              : Association to Plants;
+    operation          : Association to OrderOperations; // Linked operation (e.g. Operation 0030 or 0040)
+    operationSequence  : Integer; // e.g. 30, 40
+    inspectionType     : String(2) default '04'; // '03' (In-Process), '04' (Post-Production)
+    inspectionTypeDesc : String(50) default 'Post-Production Inspection'; // 'In-Process Inspection' | 'Post-Production Inspection'
+    inspectionStage    : String(20) default 'POST_PRODUCTION'; // 'IN_PROCESS', 'POST_PRODUCTION'
+    lotQty             : Decimal(15, 3);
+    inspectedQty       : Decimal(15, 3) default 0;
+    approvedQty        : Decimal(15, 3) default 0;
+    rejectedQty        : Decimal(15, 3) default 0;
+    resultsRecorded    : Boolean default false; // Mandatory Result Recording flag before UD
+    resultsStatus      : String(15) default 'PENDING'; // 'PENDING', 'COMPLETED'
+    resultsRecordedAt  : DateTime;
+    usageDecisionStatus: String(15) default 'PENDING'; // 'LOCKED', 'PENDING', 'COMPLETED'
+    usageDecision      : String(4) default ''; // 'UDAC' (Accept), 'UDRJ' (Reject)
+    status             : String(10) default 'CREATED'; // CREATED, INSP, COMPLETED, APPROVED, REJECTED
+    inspector          : Association to Users;
+    decisionDate       : DateTime;
 }
 
 entity OrderStatusChanges : cuid, managed {

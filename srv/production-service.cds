@@ -93,7 +93,33 @@ service ProductionService {
 
     // Custom Transactional Actions
     action calculateOrderCosts(orderId: UUID) returns { success: Boolean; };
-    action checkMaterialAvailability(orderId: UUID) returns { success: Boolean; shortageCount: Integer; };
+    action checkMaterialAvailability(orderId: UUID) returns { 
+        success: Boolean; 
+        shortageCount: Integer; 
+        overallStatus: String; 
+        checkedCount: Integer; 
+        availableCount: Integer; 
+        partiallyAvailableCount: Integer; 
+        unavailableCount: Integer; 
+        lastCheckedAt: String;
+        message: String;
+    };
+    action resetMaterialAvailability(orderId: UUID) returns {
+        success: Boolean;
+        overallStatus: String;
+        message: String;
+    };
+    action resetAndCheckMaterialAvailability(orderId: UUID) returns {
+        success: Boolean;
+        shortageCount: Integer;
+        overallStatus: String;
+        checkedCount: Integer;
+        availableCount: Integer;
+        partiallyAvailableCount: Integer;
+        unavailableCount: Integer;
+        lastCheckedAt: String;
+        message: String;
+    };
     action releaseOrder(orderId: UUID) returns { success: Boolean; status: String; };
     action startOrder(orderId: UUID) returns { success: Boolean; status: String; };
     
@@ -114,6 +140,11 @@ service ProductionService {
         confirmationId : String
     ) returns { success: Boolean; message: String; status: String; portalWorkflowStep: String; };
 
+    action recordResult(
+        lotId: UUID,
+        inspectedQty: Decimal(15, 3)
+    ) returns { success: Boolean; message: String; status: String; };
+
     action submitUsageDecision(
         lotId: UUID, 
         approvedQty: Decimal(15, 3), 
@@ -125,8 +156,25 @@ service ProductionService {
         orderId: UUID,
         quantity: Decimal(15, 3),
         slocId: UUID,
-        // Optional, as on confirmOperation — a material document must post
-        // into an open MM period.
+        postingDate: Date
+    ) returns { success: Boolean; docNum: String; };
+
+    action cancelGoodsReceipt(
+        orderId: UUID,
+        postingDate: Date
+    ) returns { success: Boolean; docNum: String; };
+
+    action postGoodsIssue(
+        orderId: UUID,
+        componentId: UUID,
+        quantity: Decimal(15, 3),
+        slocId: UUID,
+        postingDate: Date
+    ) returns { success: Boolean; docNum: String; };
+
+    action cancelGoodsIssue(
+        orderId: UUID,
+        componentId: UUID,
         postingDate: Date
     ) returns { success: Boolean; docNum: String; };
 
@@ -226,6 +274,17 @@ service ProductionService {
         message: String;
     };
 
+    // Refresh/Sync Single Order directly from SAP
+    action syncSingleOrder(orderId: UUID) returns {
+        success      : Boolean;
+        orderNumber  : String;
+        systemStatus : String;
+        goodsIssueStatus   : String;
+        goodsReceiptStatus : String;
+        lastSapSyncAt: String;
+        message      : String;
+    };
+
     // Get Status Changes history
     action getStatusChanges(orderId: UUID) returns array of {
         oldStatus : String;
@@ -233,6 +292,27 @@ service ProductionService {
         changedBy : String;
         changedAt : String;
         remark    : String;
+    };
+
+    // Get Documented Goods Movements history
+    action getDocumentedGoodsMovements(orderId: UUID) returns array of {
+        ID               : UUID;
+        docNumber        : String;
+        movementYear     : String;
+        itemNumber       : String;
+        movementType     : String;
+        movementCategory : String;
+        materialCode     : String;
+        materialDescription : String;
+        quantity         : Decimal(15, 3);
+        unit             : String;
+        postingDate      : String;
+        documentDate     : String;
+        plantCode        : String;
+        storageLocationCode : String;
+        orderNumber      : String;
+        stockType        : String;
+        status           : String;
     };
 
     // Get Change Management / Audit Trail
@@ -268,19 +348,6 @@ service ProductionService {
             shortageQty : Decimal(15,3);
             unit        : String;
         };
-    };
-
-    action getDocumentedGoodsMovements(orderId: UUID) returns array of {
-        docNumber       : String;
-        item            : String;
-        movementType    : String;
-        material        : String;
-        description     : String;
-        quantity        : Decimal(15,3);
-        unit            : String;
-        postingDate     : String;
-        plant           : String;
-        storageLocation : String;
     };
 
     // Create Batch

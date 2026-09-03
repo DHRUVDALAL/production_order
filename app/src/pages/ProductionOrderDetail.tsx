@@ -128,6 +128,8 @@ export const ProductionOrderDetail: React.FC = () => {
   // Documented Goods Movements Modal State (Goto -> Documented Goods Movements)
   const [showGoodsMovementsModal, setShowGoodsMovementsModal] = useState(false);
   const [goodsMovementsData, setGoodsMovementsData] = useState<any[] | null>(null);
+  const [mvtCategoryFilter, setMvtCategoryFilter] = useState('ALL');
+  const [mvtTypeFilter, setMvtTypeFilter] = useState('ALL');
 
   const fetchGoodsMovementsMutation = useMutation({
     mutationFn: async () => {
@@ -314,24 +316,61 @@ export const ProductionOrderDetail: React.FC = () => {
     }
   });
 
-  // Action Mutations
+  // Availability Check Mutations & Modal state
+  const [availabilityResult, setAvailabilityResult] = useState<any>(null);
+  const [showAvailabilityModal, setShowAvailabilityModal] = useState<boolean>(false);
+
   const checkMaterialMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/odata/v4/production/checkMaterialAvailability', { orderId: id });
-      // OData v4 action results come back flat, not wrapped in `value` —
-      // that wrapper only exists on collection reads.
       return res.data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
-      if (data?.shortageCount > 0) {
-        setErrorMsg(`Material availability checked: Found shortage in ${data.shortageCount} components!`);
+      setAvailabilityResult(data);
+      setShowAvailabilityModal(true);
+      if (data?.overallStatus === 'AVAILABLE') {
+        setSuccessMsg(data?.message || 'All raw material components are fully available!');
       } else {
-        setSuccessMsg('All raw material components are fully available!');
+        setErrorMsg(data?.message || `Material Availability Check: Required components are not fully available for Production Order ${order?.orderNumber || ''}. ${data?.shortageCount || 0} component(s) have shortages and are only partially available.`);
       }
     },
     onError: (err: any) => {
       setErrorMsg(err.response?.data?.error?.message || 'Check failed.');
+    }
+  });
+
+  const resetMaterialMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/resetMaterialAvailability', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setSuccessMsg(data?.message || 'Material availability reset to NOT_CHECKED.');
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Reset failed.');
+    }
+  });
+
+  const resetAndCheckMaterialMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/resetAndCheckMaterialAvailability', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      setAvailabilityResult(data);
+      setShowAvailabilityModal(true);
+      if (data?.overallStatus === 'AVAILABLE') {
+        setSuccessMsg(data?.message || 'Reset and check completed: All raw material components are fully available!');
+      } else {
+        setErrorMsg(data?.message || `Material Availability Check: Required components are not fully available for Production Order ${order?.orderNumber || ''}. ${data?.shortageCount || 0} component(s) have shortages and are only partially available.`);
+      }
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Reset & Check failed.');
     }
   });
 
@@ -376,12 +415,70 @@ export const ProductionOrderDetail: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
       const resVal = data?.value || data;
       const docNum = resVal?.docNum || 'unknown';
-      setSuccessMsg(`Goods Receipt posted successfully! Material Document: ${docNum}`);
+      setSuccessMsg(`Goods Receipt (101) posted successfully! Material Document: ${docNum}`);
       setShowGrForm(false);
       setGrQty('');
     },
     onError: (err: any) => {
       setErrorMsg(err.response?.data?.error?.message || 'Goods receipt failed.');
+    }
+  });
+
+  const cancelGrMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/cancelGoodsReceipt', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      const resVal = data?.value || data;
+      const docNum = resVal?.docNum || 'unknown';
+      setSuccessMsg(`Goods Receipt Cancelled (102 Reversal posted)! Material Document: ${docNum}`);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Goods receipt reversal failed.');
+    }
+  });
+
+  const postGiMutation = useMutation({
+    mutationFn: async (payload: { componentId: string; quantity: number }) => {
+      if (isOrderDlfl) {
+        throw new Error(`Goods Issue cannot be posted for Production Order ${order?.orderNumber || ''}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
+      }
+      const res = await api.post('/odata/v4/production/postGoodsIssue', {
+        orderId: id,
+        componentId: payload.componentId,
+        quantity: payload.quantity
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      const resVal = data?.value || data;
+      const docNum = resVal?.docNum || 'unknown';
+      setSuccessMsg(`Goods Issue (261) posted successfully! Material Document: ${docNum}`);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || err.message || 'Goods issue failed.');
+    }
+  });
+
+  const cancelGiMutation = useMutation({
+    mutationFn: async (componentId: string) => {
+      const res = await api.post('/odata/v4/production/cancelGoodsIssue', {
+        orderId: id,
+        componentId
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      const resVal = data?.value || data;
+      const docNum = resVal?.docNum || 'unknown';
+      setSuccessMsg(`Goods Issue Cancelled (262 Reversal posted)! Material Document: ${docNum}`);
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error?.message || 'Goods issue reversal failed.');
     }
   });
 
@@ -552,6 +649,7 @@ export const ProductionOrderDetail: React.FC = () => {
 
   const [showTecoModal, setShowTecoModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [selectedMaterialDoc, setSelectedMaterialDoc] = useState<any>(null);
 
   // Fetch Live Action Eligibility from Backend CAP
   const { data: eligibility, refetch: refetchEligibility } = useQuery({
@@ -564,6 +662,10 @@ export const ProductionOrderDetail: React.FC = () => {
   });
 
   const isOrderClosed = (order?.systemStatus || order?.status) === 'CLSD';
+  const isOrderDlfl = Boolean(
+    order?.deletionFlag === true ||
+    (order?.systemStatus || order?.status || '').includes('DLFL')
+  );
 
   const tecoMutation = useMutation({
     mutationFn: async () => {
@@ -593,6 +695,19 @@ export const ProductionOrderDetail: React.FC = () => {
       setSuccessMsg(data?.message || 'Technical Completion revoked successfully.');
     },
     onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Revoke TECO failed.')
+  });
+
+  const refreshSingleOrderMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/odata/v4/production/syncSingleOrder', { orderId: id });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orderDetail', id] });
+      queryClient.invalidateQueries({ queryKey: ['actionEligibility', id] });
+      setSuccessMsg(data?.message || 'Production Order successfully refreshed from SAP S/4HANA.');
+    },
+    onError: (err: any) => setErrorMsg(err.response?.data?.error?.message || 'Failed to refresh order from SAP.')
   });
 
   const closeOrderMutation = useMutation({
@@ -661,8 +776,8 @@ export const ProductionOrderDetail: React.FC = () => {
   // Find slocs for local plant
   const localSlocs = slocs?.filter((s: any) => s.plant_ID === order.plant_ID) || [];
 
-  // Determine stage index for progress bar based on portalWorkflowStep
-  const statusFlow = ['DRAFT', 'CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
+  // Determine stage index for progress bar based on portalWorkflowStep / systemStatus
+  const statusFlow = ['CRTD', 'MACA', 'REL', 'GI', 'CNF', 'GR', 'TECO', 'CLSD'];
   let mappedStatus = order.portalWorkflowStep || 'CRTD';
   if (!order.portalWorkflowStep) {
     const activeStatuses = (order.status || '').split(' ');
@@ -671,7 +786,7 @@ export const ProductionOrderDetail: React.FC = () => {
     else if (activeStatuses.includes('DLV') || activeStatuses.includes('PDLV')) mappedStatus = 'GR';
     else if (activeStatuses.includes('CNF') || activeStatuses.includes('PCNF')) mappedStatus = 'CNF';
     else if (activeStatuses.includes('REL')) mappedStatus = 'REL';
-    else if (activeStatuses.includes('DRAFT')) mappedStatus = 'DRAFT';
+    else mappedStatus = 'CRTD';
   }
 
   let currentStageIndex = statusFlow.indexOf(mappedStatus);
@@ -885,7 +1000,12 @@ export const ProductionOrderDetail: React.FC = () => {
                         }}>
                           <div className="sap-menu-item" onClick={() => releaseOrderMutation.mutate()}>Release (Ctrl+F1)</div>
                           <div className="sap-menu-item" onClick={() => setShowScheduleModal(true)}>Schedule</div>
-                          <div className="sap-menu-item" onClick={() => checkMaterialMutation.mutate()}>Availability Check</div>
+                          
+                          {/* Availability Check Submenu / Items */}
+                          <div className="sap-menu-item" style={{ fontWeight: 600, color: '#0a6ed1' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</div>
+                          <div className="sap-menu-item" onClick={() => resetMaterialMutation.mutate()}>Reset Availability</div>
+                          <div className="sap-menu-item" onClick={() => resetAndCheckMaterialMutation.mutate()}>Reset & Check Availability</div>
+
                           <div className="sap-menu-item" onClick={() => { calculateCostsMutation.mutate(); setShowCostsModal(true); }}>Cost (Ctrl+F7)</div>
                           <div style={{ padding: '6px 12px', color: '#94a3b8', fontSize: '0.75rem' }}>Exchange Sequences</div>
                           <div className="sap-menu-item" onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</div>
@@ -1426,7 +1546,8 @@ export const ProductionOrderDetail: React.FC = () => {
               </div>
 
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowScheduleModal(true)}>Schedule Order</button>
-              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => checkMaterialMutation.mutate()}>Check Availability</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem', fontWeight: 600, color: '#0a6ed1' }} onClick={() => checkMaterialMutation.mutate()} title="Check current component availability">Check Availability</button>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => resetAndCheckMaterialMutation.mutate()} title="Clear previous availability and re-check current stock">Reset & Check</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { setModalErrorMsg(''); setShowReadMasterModal(true); }}>Read PP Master Data</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => setShowComponentsModal(true)}>Components</button>
               <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.75rem' }} onClick={() => { document.getElementById('operations-section')?.scrollIntoView({ behavior: 'smooth' }); }}>Operations</button>
@@ -1439,70 +1560,108 @@ export const ProductionOrderDetail: React.FC = () => {
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Target Quantity</strong>
-                {isEditingQty ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
-                    <input
-                      type="number"
-                      value={editQtyValue}
-                      onChange={(e) => setEditQtyValue(e.target.value)}
-                      style={{
-                        width: '70px',
-                        padding: '2px 5px',
-                        fontSize: '0.85rem',
-                        border: '1px solid var(--sap-border-color)',
-                        borderRadius: '4px'
-                      }}
-                    />
-                    <button
-                      onClick={() => {
-                        const val = parseFloat(editQtyValue);
-                        if (!isNaN(val) && val > 0) {
-                          updateQtyMutation.mutate(val);
-                        }
-                      }}
-                      disabled={updateQtyMutation.isPending}
-                      style={{
-                        padding: '2px 8px',
-                        backgroundColor: '#37b24d',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem'
-                      }}
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setIsEditingQty(false)}
-                      style={{
-                        padding: '2px 8px',
-                        backgroundColor: '#fa5252',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.75rem'
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, marginTop: '0.2rem' }}>
-                    <span>{parseFloat(order.targetQty).toFixed(0)} PC</span>
-                    {(order.status?.split(' ').includes('CRTD') || order.status?.split(' ').includes('REL')) && (
-                      <Edit2
-                        size={14}
-                        style={{ cursor: 'pointer', color: '#0a6ed1' }}
-                        onClick={() => {
-                          setEditQtyValue(parseFloat(order.targetQty).toFixed(0));
-                          setIsEditingQty(true);
-                        }}
-                      />
-                    )}
-                  </div>
-                )}
+                {(() => {
+                  const userRole = (user?.role || '').toUpperCase();
+                  const allowedRoles = ['PROD_PLANNER', 'PROD_MANAGER', 'PRODUCTION_PLANNER', 'PRODUCTION_MANAGER', 'ADMIN'];
+                  const hasPermission = allowedRoles.includes(userRole);
+                  const currentSysStatus = order.systemStatus || order.status || 'CRTD';
+                  const isStatusEditable = ['CRTD', 'REL', 'PCNF', 'CNF'].includes(currentSysStatus);
+                  const isStatusDisabled = ['DLV', 'TECO', 'CLSD'].includes(currentSysStatus);
+                  const canEdit = hasPermission && isStatusEditable;
+
+                  let tooltipMsg = '';
+                  if (!hasPermission) {
+                    tooltipMsg = 'You do not have authorization (CHANGE_ORDER_QUANTITY) to change the Target Quantity.';
+                  } else if (isStatusDisabled) {
+                    if (currentSysStatus === 'TECO') tooltipMsg = 'Target Quantity cannot be changed because the Production Order is technically completed.';
+                    else if (currentSysStatus === 'CLSD') tooltipMsg = 'Target Quantity cannot be changed because the Production Order is closed.';
+                    else tooltipMsg = 'Target Quantity cannot be changed because the Production Order is delivered.';
+                  }
+
+                  if (isEditingQty) {
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
+                        <input
+                          type="number"
+                          value={editQtyValue}
+                          onChange={(e) => setEditQtyValue(e.target.value)}
+                          style={{
+                            width: '80px',
+                            padding: '2px 5px',
+                            fontSize: '0.85rem',
+                            border: '1px solid var(--sap-border-color)',
+                            borderRadius: '4px'
+                          }}
+                          min="1"
+                        />
+                        <span style={{ fontSize: '0.8rem', color: '#555', fontWeight: 600 }}>PC</span>
+                        <button
+                          onClick={() => {
+                            const val = parseFloat(editQtyValue);
+                            if (isNaN(val) || val <= 0) {
+                              setErrorMsg('Target Quantity must be greater than zero.');
+                              return;
+                            }
+                            updateQtyMutation.mutate(val);
+                          }}
+                          disabled={updateQtyMutation.isPending}
+                          style={{
+                            padding: '2px 8px',
+                            backgroundColor: '#37b24d',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: 600
+                          }}
+                        >
+                          {updateQtyMutation.isPending ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => setIsEditingQty(false)}
+                          style={{
+                            padding: '2px 8px',
+                            backgroundColor: '#fa5252',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: 600
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 600, marginTop: '0.2rem' }}>
+                      <span>{parseFloat(order.targetQty).toFixed(0)} PC</span>
+                      {canEdit ? (
+                          <span title="Edit Target Quantity">
+                            <Edit2
+                              size={14}
+                              style={{ cursor: 'pointer', color: '#0a6ed1' }}
+                              onClick={() => {
+                                setEditQtyValue(parseFloat(order.targetQty).toFixed(0));
+                                setIsEditingQty(true);
+                              }}
+                            />
+                          </span>
+                      ) : (
+                        <span 
+                          title={tooltipMsg} 
+                          style={{ cursor: 'not-allowed', color: '#94a3b8', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }}
+                        >
+                          🔒
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Confirmed Yield</strong>
@@ -1510,7 +1669,35 @@ export const ProductionOrderDetail: React.FC = () => {
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Delivered to Warehouse</strong>
-                <div style={{ fontWeight: 600, marginTop: '0.2rem', color: '#087f5b' }}>{parseFloat(order.deliveredQty).toFixed(0)} PC</div>
+                <div style={{ fontWeight: 600, marginTop: '0.2rem', color: '#087f5b', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span>{parseFloat(order.deliveredQty || 0).toFixed(0)} PC</span>
+                  {parseFloat(order.deliveredQty || 0) < parseFloat(order.targetQty || 0) && (
+                    <button
+                      className="sap-btn sap-btn-primary"
+                      style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: '#059669', color: 'white' }}
+                      onClick={() => {
+                        setShowGrForm(true);
+                        setGrQty(String(parseFloat(order.targetQty) - parseFloat(order.deliveredQty || 0)));
+                      }}
+                    >
+                      Post Goods Receipt (101)
+                    </button>
+                  )}
+                  {parseFloat(order.deliveredQty || 0) > 0 && (
+                    <button
+                      className="sap-btn"
+                      style={{ padding: '2px 8px', fontSize: '0.75rem', backgroundColor: '#dc2626', color: 'white', border: 'none', cursor: 'pointer' }}
+                      onClick={() => {
+                        if (confirm(`Cancel latest Goods Receipt for Order ${order.orderNumber}? This will post a 102 reversal material document.`)) {
+                          cancelGrMutation.mutate();
+                        }
+                      }}
+                      disabled={cancelGrMutation.isPending}
+                    >
+                      {cancelGrMutation.isPending ? 'Cancelling 102...' : 'Cancel Goods Receipt (102)'}
+                    </button>
+                  )}
+                </div>
               </div>
               <div>
                 <strong style={{ color: '#666' }}>Plant & Stage Location</strong>
@@ -1652,10 +1839,16 @@ export const ProductionOrderDetail: React.FC = () => {
                   </div>
                 )}
                 {activeHeaderTab === 'administration' && (
-                  <div style={{ display: 'flex', gap: '2rem' }}>
+                  <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
                     <div><strong>Created At:</strong> {order.createdAt ? new Date(order.createdAt).toLocaleString() : '-'}</div>
                     <div><strong>Created By:</strong> {order.createdBy || 'System'}</div>
                     <div><strong>Modified At:</strong> {order.modifiedAt ? new Date(order.modifiedAt).toLocaleString() : '-'}</div>
+                    <div>
+                      <strong>Last Synced with SAP:</strong>{' '}
+                      <span style={{ color: order.lastSapSyncStatus === 'FAILED' ? '#b91c1c' : '#15803d', fontWeight: 600 }}>
+                        {order.lastSapSyncAt ? new Date(order.lastSapSyncAt).toLocaleString() : 'Just now'} ({order.lastSapSyncStatus || 'SUCCESS'})
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1714,6 +1907,14 @@ export const ProductionOrderDetail: React.FC = () => {
                 Revoke TECO
               </button>
             )}
+            <button
+              className="sap-btn sap-btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', backgroundColor: '#e0f2fe', color: '#0369a1', borderColor: '#bae6fd', fontWeight: 600 }}
+              disabled={refreshSingleOrderMutation.isPending}
+              onClick={() => refreshSingleOrderMutation.mutate()}
+            >
+              {refreshSingleOrderMutation.isPending ? 'Syncing SAP...' : '↻ Refresh from SAP'}
+            </button>
             <button
               className="sap-btn sap-btn-secondary"
               style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
@@ -1809,6 +2010,7 @@ export const ProductionOrderDetail: React.FC = () => {
                 <th>Std Time</th>
                 <th>Spent Time</th>
                 <th>Yield Qty</th>
+                <th>Quality Gate</th>
                 <th>Status</th>
                 {isChangeMode && <th style={{ width: '100px' }}>Action</th>}
               </tr>
@@ -1816,83 +2018,129 @@ export const ProductionOrderDetail: React.FC = () => {
             <tbody>
               {order.operations?.length === 0 ? (
                 <tr>
-                  <td colSpan={isChangeMode ? 9 : 8} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No routing operations defined.</td>
+                  <td colSpan={isChangeMode ? 10 : 9} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No routing operations defined.</td>
                 </tr>
               ) : (
-                order.operations?.map((op: any) => (
-                  <tr key={op.ID}>
-                    <td style={{ fontWeight: 600, color: '#0a6ed1' }}>{String(op.sequence || 10).padStart(4, '0')}</td>
-                    <td style={{ color: '#94a3b8' }}>------</td>
-                    <td>
-                      {isChangeMode && editingOpId === op.ID ? (
-                        <input
-                          type="text"
-                          className="sap-input"
-                          value={editingOpDesc}
-                          onChange={(e) => setEditingOpDesc(e.target.value)}
-                          style={{ padding: '2px 6px', fontSize: '0.85rem' }}
-                        />
-                      ) : (
-                        <span style={{ fontWeight: 500 }}>{op.description}</span>
-                      )}
-                    </td>
-                    <td>
-                      {isChangeMode && editingOpId === op.ID ? (
-                        <input
-                          type="text"
-                          className="sap-input"
-                          value={editingOpWc}
-                          onChange={(e) => setEditingOpWc(e.target.value)}
-                          placeholder="e.g. CHCLRM01"
-                          style={{ padding: '2px 6px', fontSize: '0.85rem' }}
-                        />
-                      ) : (
-                        <span>{op.workCenter?.code || op.workCenter?.name || op.workCenter_ID || '-'}</span>
-                      )}
-                    </td>
-                    <td>{parseFloat(op.standardTime).toFixed(0)} {op.timeUnit}</td>
-                    <td>{parseFloat(op.confirmedTime).toFixed(0)} {op.timeUnit}</td>
-                    <td style={{ color: '#2b7c2b', fontWeight: 600 }}>{parseFloat(op.yieldQty).toFixed(0)} PC</td>
-                    <td>
-                      <span className={`sap-badge sap-badge-${op.status}`}>{op.status}</span>
-                    </td>
-                    {isChangeMode && (
+                order.operations?.map((op: any) => {
+                  const isQualityOp = (op.description || '').toLowerCase().includes('quality') || (op.description || '').toLowerCase().includes('inspection') || op.sequence === 30;
+                  const isFinalOp = op.sequence === Math.max(...order.operations.map((o: any) => o.sequence));
+                  const lot03 = isQualityOp ? order.qualityLots?.find((l: any) => l.inspectionType === '03') || order.qualityInspectionLots?.find((l: any) => l.inspectionType === '03') : null;
+                  const lot04 = isFinalOp ? order.qualityLots?.find((l: any) => l.inspectionType === '04') || order.qualityInspectionLots?.find((l: any) => l.inspectionType === '04') : null;
+
+                  return (
+                    <tr key={op.ID}>
+                      <td style={{ fontWeight: 600, color: '#0a6ed1' }}>{String(op.sequence || 10).padStart(4, '0')}</td>
+                      <td style={{ color: '#94a3b8' }}>------</td>
                       <td>
-                        {editingOpId === op.ID ? (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                              className="sap-btn"
-                              style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => updateOpMutation.mutate({ opId: op.ID, description: editingOpDesc, workCenterCode: editingOpWc })}
-                              disabled={updateOpMutation.isPending}
-                            >
-                              Save
-                            </button>
-                            <button
-                              className="sap-btn"
-                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => setEditingOpId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                        {isChangeMode && editingOpId === op.ID ? (
+                          <input
+                            type="text"
+                            className="sap-input"
+                            value={editingOpDesc}
+                            onChange={(e) => setEditingOpDesc(e.target.value)}
+                            style={{ padding: '2px 6px', fontSize: '0.85rem' }}
+                          />
                         ) : (
-                          <button
-                            className="sap-btn sap-btn-secondary"
-                            style={{ padding: '2px 8px', fontSize: '0.75rem' }}
-                            onClick={() => {
-                              setEditingOpId(op.ID);
-                              setEditingOpDesc(op.description);
-                              setEditingOpWc(op.workCenter?.code || '');
-                            }}
-                          >
-                            Edit
-                          </button>
+                          <span style={{ fontWeight: 500 }}>{op.description}</span>
                         )}
                       </td>
-                    )}
-                  </tr>
-                ))
+                      <td>
+                        {isChangeMode && editingOpId === op.ID ? (
+                          <input
+                            type="text"
+                            className="sap-input"
+                            value={editingOpWc}
+                            onChange={(e) => setEditingOpWc(e.target.value)}
+                            placeholder="e.g. CHCLRM01"
+                            style={{ padding: '2px 6px', fontSize: '0.85rem' }}
+                          />
+                        ) : (
+                          <span>{op.workCenter?.code || op.workCenter?.name || op.workCenter_ID || '-'}</span>
+                        )}
+                      </td>
+                      <td>{parseFloat(op.standardTime).toFixed(0)} {op.timeUnit}</td>
+                      <td>{parseFloat(op.confirmedTime).toFixed(0)} {op.timeUnit}</td>
+                      <td style={{ color: '#2b7c2b', fontWeight: 600 }}>{parseFloat(op.yieldQty).toFixed(0)} PC</td>
+                      <td>
+                        {isQualityOp ? (
+                          lot03 ? (
+                            lot03.usageDecision === 'UDAC' ? (
+                              <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
+                                PASSED (UDAC)
+                              </span>
+                            ) : lot03.resultsRecorded ? (
+                              <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#fef9c3', color: '#a16207', border: '1px solid #fde047' }}>
+                                UD PENDING
+                              </span>
+                            ) : (
+                              <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}>
+                                RR PENDING
+                              </span>
+                            )
+                          ) : (
+                            <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }}>
+                              ACTIVE (Type 03)
+                            </span>
+                          )
+                        ) : isFinalOp ? (
+                          lot04 ? (
+                            lot04.usageDecision === 'UDAC' ? (
+                              <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
+                                PASSED (UDAC)
+                              </span>
+                            ) : (
+                              <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#fef9c3', color: '#a16207', border: '1px solid #fde047' }}>
+                                POST-PROD ACTIVE
+                              </span>
+                            )
+                          ) : (
+                            <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Final Op</span>
+                          )
+                        ) : (
+                          <span style={{ color: '#cbd5e1', fontSize: '0.75rem' }}>-</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`sap-badge sap-badge-${op.status}`}>{op.status}</span>
+                      </td>
+                      {isChangeMode && (
+                        <td>
+                          {editingOpId === op.ID ? (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                className="sap-btn"
+                                style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => updateOpMutation.mutate({ opId: op.ID, description: editingOpDesc, workCenterCode: editingOpWc })}
+                                disabled={updateOpMutation.isPending}
+                              >
+                                Save
+                              </button>
+                              <button
+                                className="sap-btn"
+                                style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => setEditingOpId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="sap-btn sap-btn-secondary"
+                              style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                              onClick={() => {
+                                setEditingOpId(op.ID);
+                                setEditingOpDesc(op.description);
+                                setEditingOpWc(op.workCenter?.code || '');
+                              }}
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1917,106 +2165,181 @@ export const ProductionOrderDetail: React.FC = () => {
           <table className="sap-table">
             <thead>
               <tr>
-                <th style={{ width: '60px' }}>Item</th>
+                <th>Item</th>
                 <th>Component Code</th>
                 <th>Description</th>
-                <th style={{ width: '120px' }}>Required Qty</th>
+                <th>Required Qty</th>
                 <th>Issued Qty</th>
                 <th>Status</th>
-                {isChangeMode && <th style={{ width: '120px' }}>Action</th>}
+                <th>Goods Issue Action (261 / 262)</th>
+                {isChangeMode && <th style={{ width: '100px' }}>Action</th>}
               </tr>
             </thead>
             <tbody>
               {order.components?.length === 0 ? (
                 <tr>
-                  <td colSpan={isChangeMode ? 7 : 6} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
+                  <td colSpan={isChangeMode ? 8 : 7} style={{ textAlign: 'center', color: '#888', padding: '1rem' }}>No components listed.</td>
                 </tr>
               ) : (
-                order.components?.map((c: any, idx: number) => (
-                  <tr key={c.ID}>
-                    <td style={{ fontWeight: 600, color: '#475569' }}>{String((idx + 1) * 10).padStart(4, '0')}</td>
-                    <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{c.componentMaterial?.code}</td>
-                    <td>{c.componentMaterial?.description}</td>
-                    <td>
-                      {isChangeMode && editingCompId === c.ID ? (
-                        <input
-                          type="number"
-                          className="sap-input"
-                          value={editingCompQty}
-                          onChange={(e) => setEditingCompQty(e.target.value)}
-                          style={{ padding: '2px 6px', fontSize: '0.85rem', width: '80px' }}
-                        />
-                      ) : (
-                        <span style={{ fontWeight: 600 }}>{parseFloat(c.requiredQty).toFixed(0)} {c.unit}</span>
-                      )}
-                    </td>
-                    <td>{parseFloat(c.issuedQty).toFixed(0)} {c.unit}</td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                        padding: '4px 10px',
-                        borderRadius: '12px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        backgroundColor: c.status === 'ISSD' ? '#ebfbee' : c.status === 'MSPT' ? '#ffe3e3' : '#e8f4fd',
-                        color: c.status === 'ISSD' ? '#2b7c2b' : c.status === 'MSPT' ? '#bb0000' : '#0a6ed1',
-                      }}>
-                        {c.status === 'MSPT' && <AlertTriangle size={12} />}
-                        <span>{c.status === 'RESV' ? 'Reserved' : c.status === 'MSPT' ? 'Material Shortage' : 'Issued'}</span>
-                      </span>
-                    </td>
-                    {isChangeMode && (
+                order.components?.map((c: any, idx: number) => {
+                  const issuedVal = parseFloat(c.issuedQty || 0);
+                  const reqVal = parseFloat(c.requiredQty || 0);
+                  const isFullyIssued = issuedVal >= reqVal && reqVal > 0;
+                  const compMatId = c.componentMaterial_ID || c.componentMaterial?.ID;
+                  const compMatCode = c.componentMaterial?.code || c.componentMaterialCode;
+                  const active261 = (order.goodsMovements || []).find((m: any) => {
+                    const is261 = m.movementType === '261';
+                    const isNotCancelled = !m.isCancelled && m.status !== 'CANCELLED' && !m.cancelledByDoc;
+                    const matchesMat = (compMatId && m.material_ID === compMatId) ||
+                                       (compMatCode && (m.material?.code === compMatCode || m.materialCode === compMatCode));
+                    return is261 && isNotCancelled && matchesMat;
+                  });
+                  const hasActive261 = Boolean(active261) || (issuedVal > 0 && c.status === 'ISSD');
+
+                  return (
+                    <tr key={c.ID}>
+                      <td style={{ fontWeight: 600, color: '#475569' }}>{String((idx + 1) * 10).padStart(4, '0')}</td>
+                      <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{c.componentMaterial?.code || c.componentMaterialCode}</td>
+                      <td>{c.componentMaterial?.description || c.componentDescription || 'Component Material'}</td>
                       <td>
-                        {editingCompId === c.ID ? (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                              className="sap-btn"
-                              style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => updateCompMutation.mutate({ compId: c.ID, requiredQty: parseFloat(editingCompQty) })}
-                              disabled={updateCompMutation.isPending}
-                            >
-                              Save
-                            </button>
-                            <button
-                              className="sap-btn"
-                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => setEditingCompId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
+                        {isChangeMode && editingCompId === c.ID ? (
+                          <input
+                            type="number"
+                            className="sap-input"
+                            value={editingCompQty}
+                            onChange={(e) => setEditingCompQty(e.target.value)}
+                            style={{ padding: '2px 6px', fontSize: '0.85rem', width: '80px' }}
+                          />
                         ) : (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <button
-                              className="sap-btn sap-btn-secondary"
-                              style={{ padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => {
-                                setEditingCompId(c.ID);
-                                setEditingCompQty(c.requiredQty);
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="sap-btn"
-                              style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
-                              onClick={() => {
-                                if (confirm(`Are you sure you want to delete component ${c.componentMaterial?.code} from SAP S/4HANA?`)) {
-                                  deleteCompMutation.mutate(c.ID);
-                                }
-                              }}
-                              disabled={deleteCompMutation.isPending}
-                            >
-                              Delete
-                            </button>
-                          </div>
+                          <span style={{ fontWeight: 600 }}>{reqVal.toFixed(0)} {c.unit || 'PC'}</span>
                         )}
                       </td>
-                    )}
-                  </tr>
-                ))
+                      <td>{issuedVal.toFixed(0)} {c.unit || 'PC'}</td>
+                      <td>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          padding: '4px 10px',
+                          borderRadius: '12px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          backgroundColor: c.status === 'ISSD' || isFullyIssued ? '#ebfbee' : c.status === 'MSPT' ? '#ffe3e3' : '#e8f4fd',
+                          color: c.status === 'ISSD' || isFullyIssued ? '#2b7c2b' : c.status === 'MSPT' ? '#bb0000' : '#0a6ed1',
+                        }}>
+                          {c.status === 'MSPT' && <AlertTriangle size={12} />}
+                          <span>{hasActive261 ? 'Issued (261)' : isFullyIssued ? 'Issued (261)' : c.status === 'MSPT' ? 'Material Shortage' : 'Reserved'}</span>
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            className="sap-btn sap-btn-primary"
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '0.75rem',
+                              backgroundColor: (isOrderDlfl || hasActive261) ? '#cccccc' : '#0a6ed1',
+                              color: (isOrderDlfl || hasActive261) ? '#666666' : 'white',
+                              cursor: (isOrderDlfl || hasActive261) ? 'not-allowed' : 'pointer'
+                            }}
+                            onClick={() => {
+                              if (isOrderDlfl) {
+                                setErrorMsg(`Goods Issue cannot be posted for Production Order ${order?.orderNumber || ''}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
+                                return;
+                              }
+                              if (hasActive261) {
+                                setErrorMsg(`Goods Issue (261) already exists and is active for component ${compMatCode || ''} on Order ${order?.orderNumber || ''}. Reverse current Goods Issue before posting a new one.`);
+                                return;
+                              }
+                              postGiMutation.mutate({ componentId: c.ID, quantity: reqVal - issuedVal });
+                            }}
+                            disabled={isOrderDlfl || hasActive261 || postGiMutation.isPending}
+                            title={isOrderDlfl ? "Goods Issue is not allowed. Production Order has Deletion Flag (DLFL)." : hasActive261 ? "Active Goods Issue (261) already exists. Reverse current Goods Issue before posting a new one." : ""}
+                          >
+                            {postGiMutation.isPending ? 'Posting 261...' : 'Post Goods Issue (261)'}
+                          </button>
+
+                          <button
+                            className="sap-btn"
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '0.75rem',
+                              backgroundColor: (isOrderDlfl || !hasActive261) ? '#e2e8f0' : '#dc2626',
+                              color: (isOrderDlfl || !hasActive261) ? '#94a3b8' : 'white',
+                              border: 'none',
+                              cursor: (isOrderDlfl || !hasActive261) ? 'not-allowed' : 'pointer'
+                            }}
+                            onClick={() => {
+                              if (isOrderDlfl) {
+                                setErrorMsg(`Goods Issue reversal is not allowed. Production Order ${order?.orderNumber || ''} has Deletion Flag (DLFL).`);
+                                return;
+                              }
+                              if (!hasActive261) {
+                                setErrorMsg(`No active Goods Issue (261) document available to reverse for component ${compMatCode || ''}.`);
+                                return;
+                              }
+                              if (confirm(`Cancel Goods Issue for component ${c.componentMaterial?.code || c.componentMaterialCode}? This will post a 262 reversal material document.`)) {
+                                cancelGiMutation.mutate(c.ID);
+                              }
+                            }}
+                            disabled={isOrderDlfl || !hasActive261 || cancelGiMutation.isPending}
+                            title={isOrderDlfl ? "Goods Issue reversal is not allowed. Production Order has Deletion Flag (DLFL)." : !hasActive261 ? "No active Goods Issue (261) document available to reverse." : ""}
+                          >
+                            {cancelGiMutation.isPending ? 'Cancelling 262...' : 'Cancel Goods Issue (262)'}
+                          </button>
+                        </div>
+                      </td>
+                      {isChangeMode && (
+                        <td>
+                          {editingCompId === c.ID ? (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                className="sap-btn"
+                                style={{ backgroundColor: '#2b7c2b', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => updateCompMutation.mutate({ compId: c.ID, requiredQty: parseFloat(editingCompQty) })}
+                                disabled={updateCompMutation.isPending}
+                              >
+                                Save
+                              </button>
+                              <button
+                                className="sap-btn"
+                                style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => setEditingCompId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                className="sap-btn sap-btn-secondary"
+                                style={{ padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => {
+                                  setEditingCompId(c.ID);
+                                  setEditingCompQty(c.requiredQty);
+                                }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                className="sap-btn"
+                                style={{ backgroundColor: '#fa5252', color: '#fff', padding: '2px 6px', fontSize: '0.75rem' }}
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to delete component ${c.componentMaterial?.code} from SAP S/4HANA?`)) {
+                                    deleteCompMutation.mutate(c.ID);
+                                  }
+                                }}
+                                disabled={deleteCompMutation.isPending}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -2047,15 +2370,23 @@ export const ProductionOrderDetail: React.FC = () => {
               ) : (
                 order.goodsMovements?.map((gm: any) => (
                   <tr key={gm.ID}>
-                    <td style={{ fontWeight: 600 }}>{gm.movementNumber}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      <button
+                        className="sap-btn"
+                        style={{ padding: 0, border: 'none', background: 'none', color: '#0a6ed1', textDecoration: 'underline', fontWeight: 700, cursor: 'pointer' }}
+                        onClick={() => setSelectedMaterialDoc(gm)}
+                      >
+                        {gm.movementNumber}
+                      </button>
+                    </td>
                     <td>
                       <span style={{ fontWeight: 700 }}>{gm.movementType}</span>
                       <span style={{ fontSize: '0.75rem', color: '#777', marginLeft: '0.4rem' }}>
-                        ({gm.movementType === '101' ? 'Goods Receipt' : gm.movementType === '261' ? 'Goods Issue' : gm.movementType === '350' ? 'QM Blocked' : 'Stock Entry'})
+                        ({gm.movementType === '101' ? 'Goods Receipt' : gm.movementType === '261' ? 'Goods Issue' : gm.movementType === '102' ? 'GR Reversal' : gm.movementType === '262' ? 'GI Reversal' : 'Stock Movement'})
                       </span>
                     </td>
-                    <td>{gm.material?.code}</td>
-                    <td style={{ fontWeight: 600 }}>{parseFloat(gm.quantity).toFixed(0)} {gm.unit}</td>
+                    <td>{gm.material?.code || gm.materialCode}</td>
+                    <td style={{ fontWeight: 600 }}>{parseFloat(gm.quantity).toFixed(0)} {gm.unit || 'PC'}</td>
                     <td>{gm.postingDate}</td>
                   </tr>
                 ))
@@ -2414,6 +2745,67 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       )}
 
+      {showAvailabilityModal && availabilityResult && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '2rem', width: '560px', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, color: '#0a6ed1' }}>Material Availability Check Result</h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setShowAvailabilityModal(false)}>✕</button>
+            </div>
+
+            <div style={{ marginBottom: '1rem', padding: '0.75rem', borderRadius: '6px', backgroundColor: availabilityResult.overallStatus === 'AVAILABLE' ? '#f0fdf4' : availabilityResult.overallStatus === 'PARTIALLY_AVAILABLE' ? '#fffbe6' : '#fef2f2', border: `1px solid ${availabilityResult.overallStatus === 'AVAILABLE' ? '#bbf7d0' : availabilityResult.overallStatus === 'PARTIALLY_AVAILABLE' ? '#ffe58f' : '#fecaca'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700 }}>
+                <span>Overall Status:</span>
+                <span style={{ color: availabilityResult.overallStatus === 'AVAILABLE' ? '#16a34a' : availabilityResult.overallStatus === 'PARTIALLY_AVAILABLE' ? '#d97706' : '#dc2626' }}>
+                  {availabilityResult.overallStatus}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#475569', marginTop: '0.4rem' }}>
+                Last Checked: {availabilityResult.lastCheckedAt ? new Date(availabilityResult.lastCheckedAt).toLocaleString() : 'Just now'}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', textAlign: 'center', marginBottom: '1.25rem', fontSize: '0.82rem' }}>
+              <div style={{ padding: '0.5rem', backgroundColor: '#f8fafc', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                <div style={{ color: '#64748b' }}>Checked</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700 }}>{availabilityResult.checkedCount || 0}</div>
+              </div>
+              <div style={{ padding: '0.5rem', backgroundColor: '#f0fdf4', borderRadius: '4px', border: '1px solid #bbf7d0' }}>
+                <div style={{ color: '#16a34a' }}>Available</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#16a34a' }}>{availabilityResult.availableCount || 0}</div>
+              </div>
+              <div style={{ padding: '0.5rem', backgroundColor: '#fffbe6', borderRadius: '4px', border: '1px solid #ffe58f' }}>
+                <div style={{ color: '#d97706' }}>Partially</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#d97706' }}>{availabilityResult.partiallyAvailableCount || 0}</div>
+              </div>
+              <div style={{ padding: '0.5rem', backgroundColor: '#fef2f2', borderRadius: '4px', border: '1px solid #fecaca' }}>
+                <div style={{ color: '#dc2626' }}>Unavailable</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#dc2626' }}>{availabilityResult.unavailableCount || 0}</div>
+              </div>
+            </div>
+
+            <div style={{ fontSize: '0.85rem', color: '#334155', marginBottom: '1.25rem', padding: '0.5rem 0.75rem', backgroundColor: '#f1f5f9', borderRadius: '4px' }}>
+              {availabilityResult.message}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button 
+                className="sap-btn sap-btn-secondary" 
+                style={{ padding: '4px 12px', fontSize: '0.8rem' }}
+                onClick={() => {
+                  setShowAvailabilityModal(false);
+                  resetAndCheckMaterialMutation.mutate();
+                }}
+                disabled={resetAndCheckMaterialMutation.isPending}
+              >
+                {resetAndCheckMaterialMutation.isPending ? 'Resetting & Checking...' : '↻ Reset & Check Again'}
+              </button>
+              <button className="sap-btn sap-btn-primary" style={{ padding: '4px 16px', fontSize: '0.8rem' }} onClick={() => setShowAvailabilityModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showScheduleModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div className="sap-card" style={{ padding: '2rem', width: '400px' }}>
@@ -2470,6 +2862,244 @@ export const ProductionOrderDetail: React.FC = () => {
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button className="sap-btn sap-btn-secondary" onClick={() => setShowChangeQtyModal(false)}>Cancel</button>
               <button className="sap-btn sap-btn-primary" onClick={() => { if(parseFloat(newQty) >= parseFloat(order.confirmedQty)) changeQtyMutation.mutate(); else alert("Quantity cannot be less than confirmed quantity."); }} disabled={changeQtyMutation.isPending}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Documented Goods Movements Modal */}
+      {showGoodsMovementsModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '920px', maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto', borderRadius: '8px' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#0a6ed1' }}>
+                Documented Goods Movements — Order {order.orderNumber}
+              </h3>
+              <button 
+                className="sap-btn sap-btn-secondary" 
+                style={{ padding: '2px 8px', fontSize: '0.9rem' }} 
+                onClick={() => setShowGoodsMovementsModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Optional Filter Controls Bar */}
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', backgroundColor: '#f8fafc', padding: '0.6rem 0.8rem', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}>
+                <span style={{ fontWeight: 600, color: '#475569' }}>Movement Category:</span>
+                <select 
+                  className="sap-input" 
+                  value={mvtCategoryFilter} 
+                  onChange={e => setMvtCategoryFilter(e.target.value)}
+                  style={{ padding: '2px 6px', fontSize: '0.8rem', height: '28px' }}
+                >
+                  <option value="ALL">ALL Categories</option>
+                  <option value="GI">Goods Issue (261)</option>
+                  <option value="GR">Goods Receipt (101)</option>
+                  <option value="REVERSAL">Reversals (262 / 102)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}>
+                <span style={{ fontWeight: 600, color: '#475569' }}>Movement Type:</span>
+                <select 
+                  className="sap-input" 
+                  value={mvtTypeFilter} 
+                  onChange={e => setMvtTypeFilter(e.target.value)}
+                  style={{ padding: '2px 6px', fontSize: '0.8rem', height: '28px' }}
+                >
+                  <option value="ALL">ALL Types</option>
+                  <option value="261">261 - Goods Issue</option>
+                  <option value="101">101 - Goods Receipt</option>
+                  <option value="262">262 - GI Reversal</option>
+                  <option value="102">102 - GR Reversal</option>
+                </select>
+              </div>
+
+              {(mvtCategoryFilter !== 'ALL' || mvtTypeFilter !== 'ALL') && (
+                <button 
+                  className="sap-btn sap-btn-secondary" 
+                  style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                  onClick={() => { setMvtCategoryFilter('ALL'); setMvtTypeFilter('ALL'); }}
+                >
+                  Reset Filters
+                </button>
+              )}
+            </div>
+
+            {/* Goods Movement Table */}
+            {(() => {
+              const filteredMovements = (goodsMovementsData || []).filter((mvt: any) => {
+                if (mvtCategoryFilter === 'GI' && !['261'].includes(mvt.movementType)) return false;
+                if (mvtCategoryFilter === 'GR' && !['101'].includes(mvt.movementType)) return false;
+                if (mvtCategoryFilter === 'REVERSAL' && !['262', '102'].includes(mvt.movementType)) return false;
+                if (mvtTypeFilter !== 'ALL' && mvt.movementType !== mvtTypeFilter) return false;
+                return true;
+              });
+
+              if (filteredMovements.length === 0) {
+                return (
+                  <div style={{ padding: '3rem 1rem', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px border-dashed #cbd5e1', color: '#64748b' }}>
+                    <div style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.25rem' }}>No documented goods movements found</div>
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No Goods Issue or Goods Receipt material documents exist matching the current criteria for Order {order.orderNumber}.</div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="sap-table-container" style={{ border: '1px solid #cbd5e1', borderRadius: '4px', overflowX: 'auto' }}>
+                  <table className="sap-table" style={{ fontSize: '0.825rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#f1f5f9' }}>
+                        <th style={{ width: '110px' }}>Doc Number</th>
+                        <th style={{ width: '50px' }}>Item</th>
+                        <th style={{ width: '80px' }}>Mvt Type</th>
+                        <th style={{ width: '130px' }}>Category</th>
+                        <th style={{ width: '110px' }}>Material</th>
+                        <th>Description</th>
+                        <th style={{ textAlign: 'right', width: '90px' }}>Quantity</th>
+                        <th style={{ width: '50px' }}>Unit</th>
+                        <th style={{ width: '100px' }}>Posting Date</th>
+                        <th style={{ width: '60px' }}>Plant</th>
+                        <th style={{ width: '70px' }}>SLoc</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMovements.map((mvt: any, idx: number) => {
+                        const isGi = ['261', '262'].includes(mvt.movementType);
+                        const isGr = ['101', '102'].includes(mvt.movementType);
+                        const isReversal = ['262', '102'].includes(mvt.movementType);
+
+                        return (
+                          <tr key={mvt.ID || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <td style={{ fontWeight: 600 }}>
+                              <span 
+                                style={{ color: '#0a6ed1', cursor: 'pointer', textDecoration: 'underline' }}
+                                title="Click to view Material Document Details"
+                                onClick={() => setSelectedMaterialDoc(mvt)}
+                              >
+                                {mvt.docNumber}
+                              </span>
+                            </td>
+                            <td style={{ color: '#64748b', fontWeight: 600 }}>{mvt.itemNumber}</td>
+                            <td style={{ fontWeight: 700 }}>{mvt.movementType}</td>
+                            <td>
+                              <span style={{ 
+                                padding: '2px 6px', 
+                                borderRadius: '4px', 
+                                fontSize: '0.75rem', 
+                                fontWeight: 600,
+                                backgroundColor: isReversal ? '#fef2f2' : isGi ? '#e6f4ea' : isGr ? '#e8f0fe' : '#f1f5f9',
+                                color: isReversal ? '#dc2626' : isGi ? '#137333' : isGr ? '#1a73e8' : '#334155',
+                                border: `1px solid ${isReversal ? '#fecaca' : isGi ? '#b7e1cd' : isGr ? '#aecbfa' : '#cbd5e1'}`
+                              }}>
+                                {mvt.movementCategory}
+                              </span>
+                            </td>
+                            <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{mvt.materialCode}</td>
+                            <td>{mvt.materialDescription}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{mvt.quantity}</td>
+                            <td style={{ color: '#64748b' }}>{mvt.unit}</td>
+                            <td>{mvt.postingDate}</td>
+                            <td>{mvt.plantCode}</td>
+                            <td>{mvt.storageLocationCode}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem', borderTop: '1px solid #cbd5e1', paddingTop: '0.75rem' }}>
+              <button 
+                className="sap-btn sap-btn-primary" 
+                style={{ padding: '4px 16px', fontSize: '0.825rem' }} 
+                onClick={() => setShowGoodsMovementsModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Material Document Details Popup Modal */}
+      {selectedMaterialDoc && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '560px', borderRadius: '8px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, color: '#0a6ed1', fontSize: '1.1rem' }}>
+                Material Document Details — {selectedMaterialDoc.docNumber}
+              </h3>
+              <button 
+                className="sap-btn sap-btn-secondary" 
+                style={{ padding: '2px 8px' }} 
+                onClick={() => setSelectedMaterialDoc(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Document Number:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.docNumber}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Document Year:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.movementYear || '2026'}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Item Number:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.itemNumber || '10'}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Movement Type:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.movementType} ({selectedMaterialDoc.movementCategory})</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Posting Date:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.postingDate}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Material Code:</span>
+                <div style={{ fontWeight: 700, color: '#0a6ed1', marginTop: '2px' }}>{selectedMaterialDoc.materialCode}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Quantity:</span>
+                <div style={{ fontWeight: 700, color: '#16a34a', marginTop: '2px' }}>{selectedMaterialDoc.quantity} {selectedMaterialDoc.unit}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Plant:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.plantCode}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Storage Location:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.storageLocationCode}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Order Reference:</span>
+                <div style={{ fontWeight: 700, color: '#0a6ed1', marginTop: '2px' }}>{selectedMaterialDoc.orderNumber}</div>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontWeight: 600 }}>Stock Type:</span>
+                <div style={{ fontWeight: 700, color: '#1e293b', marginTop: '2px' }}>{selectedMaterialDoc.stockType || 'Unrestricted-Use'}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button 
+                className="sap-btn sap-btn-primary" 
+                style={{ padding: '4px 16px', fontSize: '0.825rem' }} 
+                onClick={() => setSelectedMaterialDoc(null)}
+              >
+                Close Overview
+              </button>
             </div>
           </div>
         </div>
@@ -2788,6 +3418,49 @@ export const ProductionOrderDetail: React.FC = () => {
               >
                 {closeOrderMutation.isPending ? 'Closing SAP Order...' : 'Confirm Close Order'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Material Document Drill-Down Modal */}
+      {selectedMaterialDoc && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <div className="sap-card" style={{ padding: '1.5rem', width: '580px', backgroundColor: '#ffffff', color: '#1e293b' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.75rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1', fontWeight: 700 }}>
+                Material Document Details — {selectedMaterialDoc.movementNumber}
+              </h3>
+              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px', fontSize: '0.8rem' }} onClick={() => setSelectedMaterialDoc(null)}>✕</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              <div><strong>Document Number:</strong> {selectedMaterialDoc.movementNumber}</div>
+              <div><strong>Document Year:</strong> {selectedMaterialDoc.movementYear || new Date().getFullYear()}</div>
+              <div><strong>Movement Type:</strong> {selectedMaterialDoc.movementType}</div>
+              <div><strong>Posting Date:</strong> {selectedMaterialDoc.postingDate || '-'}</div>
+              <div><strong>Material Code:</strong> {selectedMaterialDoc.material?.code || selectedMaterialDoc.materialCode || '-'}</div>
+              <div><strong>Quantity:</strong> {parseFloat(selectedMaterialDoc.quantity || 0).toFixed(0)} {selectedMaterialDoc.unit || 'PC'}</div>
+              <div><strong>Plant:</strong> {selectedMaterialDoc.plant?.code || order?.plant?.code || '-'}</div>
+              <div><strong>Storage Location:</strong> {selectedMaterialDoc.storageLocation?.code || order?.storageLocation?.code || '-'}</div>
+              <div><strong>Order Reference:</strong> {order?.orderNumber}</div>
+              <div><strong>Stock Type:</strong> {selectedMaterialDoc.stockType || 'Unrestricted-Use'}</div>
+            </div>
+
+            {selectedMaterialDoc.isCancelled && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem', borderRadius: '6px', fontSize: '0.82rem', marginBottom: '1.25rem' }}>
+                ⚠️ <strong>Cancellation Relationship:</strong> This document was cancelled by Material Document <strong>{selectedMaterialDoc.cancelledByDoc || 'Reversal Doc'}</strong>.
+              </div>
+            )}
+
+            {selectedMaterialDoc.reversalRefDoc && (
+              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', padding: '0.75rem', borderRadius: '6px', fontSize: '0.82rem', marginBottom: '1.25rem' }}>
+                ℹ️ <strong>Reversal Reference:</strong> This document is a cancellation of original Material Document <strong>{selectedMaterialDoc.reversalRefDoc}</strong>.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="sap-btn sap-btn-primary" onClick={() => setSelectedMaterialDoc(null)}>Close Overview</button>
             </div>
           </div>
         </div>
@@ -3160,60 +3833,7 @@ export const ProductionOrderDetail: React.FC = () => {
         </div>
       )}
 
-      {/* SAP Documented Goods Movements Modal (Goto -> Documented Goods Movements) */}
-      {showGoodsMovementsModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-          <div className="sap-card" style={{ padding: '1.5rem', width: '850px', maxHeight: '80vh', overflowY: 'auto', backgroundColor: '#ffffff', color: '#1e293b' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #cbd5e1', paddingBottom: '0.5rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0a6ed1' }}>Documented Goods Movements — Order {order.orderNumber}</h3>
-              <button className="sap-btn sap-btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setShowGoodsMovementsModal(false)}>✕</button>
-            </div>
 
-            {(!goodsMovementsData || goodsMovementsData.length === 0) ? (
-              <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: '#f8fafc', color: '#64748b', borderRadius: '4px' }}>
-                No documented goods movements found for this Production Order.
-              </div>
-            ) : (
-              <div className="sap-table-container">
-                <table className="sap-table" style={{ fontSize: '0.8rem' }}>
-                  <thead>
-                    <tr>
-                      <th>Doc Number</th>
-                      <th>Item</th>
-                      <th>Mvt Type</th>
-                      <th>Material</th>
-                      <th>Description</th>
-                      <th>Quantity</th>
-                      <th>Posting Date</th>
-                      <th>Plant</th>
-                      <th>SLoc</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {goodsMovementsData.map((row: any, idx: number) => (
-                      <tr key={idx}>
-                        <td style={{ fontWeight: 700, color: '#0a6ed1' }}>{row.docNumber}</td>
-                        <td>{row.item}</td>
-                        <td style={{ fontWeight: 700 }}>{row.movementType}</td>
-                        <td style={{ fontWeight: 600 }}>{row.material}</td>
-                        <td>{row.description}</td>
-                        <td style={{ fontWeight: 700 }}>{row.quantity} {row.unit}</td>
-                        <td>{row.postingDate}</td>
-                        <td>{row.plant}</td>
-                        <td>{row.storageLocation}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
-              <button className="sap-btn sap-btn-primary" onClick={() => setShowGoodsMovementsModal(false)}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Operation Details Modal (F7 / Menu -> Operation -> Operation Details) */}
       {showOperationDetailsModal && (

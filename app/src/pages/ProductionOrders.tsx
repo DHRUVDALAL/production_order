@@ -336,17 +336,42 @@ export const ProductionOrders: React.FC = () => {
   };
 
   const filteredOrders = orders?.filter((o: any) => {
-    // 1. Status Filter
-    if (filterStatus !== 'ALL' && !o.status?.split(' ').includes(filterStatus)) return false;
+    // 1. Primary Lifecycle Status Filter (strictly evaluated using systemStatus || status)
+    if (filterStatus !== 'ALL') {
+      const sysStatus = o.systemStatus || o.status || 'CRTD';
+      if (sysStatus !== filterStatus && !o.status?.split(' ').includes(filterStatus)) {
+        return false;
+      }
+    }
 
-    // 2. Plant Filter
+    // Evaluate effective GI / GR posted status dynamically based on status fields, confirmed/delivered quantities, or issued components
+    const hasGiPosted = o.goodsIssueStatus === 'POSTED' || 
+                        o.goodsIssueStatus === 'PARTIAL' || 
+                        ['STRT', 'INSP', 'PCNF', 'CNF', 'PDLV', 'DLV', 'TECO', 'CLSD'].includes(o.systemStatus || o.status) || 
+                        (parseFloat(o.confirmedQty) > 0) || 
+                        (o.components?.some((c: any) => parseFloat(c.issuedQty) > 0));
+
+    const hasGrPosted = o.goodsReceiptStatus === 'POSTED' || 
+                        o.goodsReceiptStatus === 'PARTIAL' || 
+                        (parseFloat(o.deliveredQty) > 0);
+
+    // 2. Goods Movement Status Filter
+    if (filterGoodsMovement === 'GI_POSTED') {
+      if (!hasGiPosted) return false;
+    } else if (filterGoodsMovement === 'GR_POSTED') {
+      if (!hasGrPosted) return false;
+    } else if (filterGoodsMovement === 'GI_GR_POSTED') {
+      if (!hasGiPosted || !hasGrPosted) return false;
+    }
+
+    // 3. Plant Filter
     if (filterPlant !== 'ALL' && o.plant_ID !== filterPlant) return false;
 
-    // 3. Date Filters
+    // 4. Date Filters
     if (filterStartDate && o.plannedStartDate && o.plannedStartDate < filterStartDate) return false;
     if (filterEndDate && o.plannedEndDate && o.plannedEndDate > filterEndDate) return false;
 
-    // 4. Search query matching orderNumber, material code/description, plant code/name
+    // 5. Search query matching orderNumber, material code/description, plant code/name
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       const matchOrder = o.orderNumber?.toLowerCase().includes(q);
@@ -943,7 +968,7 @@ export const ProductionOrders: React.FC = () => {
               <span>Status:</span>
             </div>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {['ALL', 'DRAFT', 'CRTD', 'REL', 'CNF', 'PCNF', 'DLV', 'PRC', 'CSER', 'GMPS', 'MACM', 'RESA', 'VCAL', 'TECO', 'CLSD'].map((st) => (
+              {['ALL', 'CRTD', 'REL', 'PCNF', 'CNF', 'DLV', 'TECO', 'CLSD'].map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -1089,36 +1114,29 @@ export const ProductionOrders: React.FC = () => {
                     <td>{parseFloat(o.confirmedQty).toFixed(0)} PC</td>
                     <td>{parseFloat(o.deliveredQty).toFixed(0)} PC</td>
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '240px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         {/* Primary SAP Lifecycle Status Badge (TECO, REL, CNF, CLSD, etc.) */}
-                        <div>
-                          <span className={`sap-badge sap-badge-${o.systemStatus || o.status || 'CRTD'}`}>
-                            {o.systemStatus || o.status || 'CRTD'}
+                        <span className={`sap-badge sap-badge-${o.systemStatus || o.status || 'CRTD'}`}>
+                          {o.systemStatus || o.status || 'CRTD'}
+                        </span>
+
+                        {/* Secondary Goods Movement Badges */}
+                        {(o.goodsIssueStatus === 'POSTED' || o.goodsIssueStatus === 'PARTIAL' || ['STRT', 'INSP', 'PCNF', 'CNF', 'PDLV', 'DLV', 'TECO', 'CLSD'].includes(o.systemStatus || o.status) || parseFloat(o.confirmedQty) > 0) && (
+                          <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#e6f4ea', color: '#137333', border: '1px solid #b7e1cd', fontWeight: 600 }}>
+                            GI Posted
                           </span>
-                        </div>
-                        {/* Secondary Goods Movement Indicators */}
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                          {o.goodsIssueStatus === 'POSTED' && (
-                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#e6f4ea', color: '#137333', border: '1px solid #b7e1cd', fontWeight: 600 }}>
-                              GI: Posted
-                            </span>
-                          )}
-                          {o.goodsIssueStatus === 'PARTIAL' && (
-                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#fef7e0', color: '#b06000', border: '1px solid #fce8b2', fontWeight: 600 }}>
-                              GI: Partial
-                            </span>
-                          )}
-                          {o.goodsReceiptStatus === 'POSTED' && (
-                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#e8f0fe', color: '#1a73e8', border: '1px solid #aecbfa', fontWeight: 600 }}>
-                              GR: Posted
-                            </span>
-                          )}
-                          {o.goodsReceiptStatus === 'PARTIAL' && (
-                            <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '4px', backgroundColor: '#fef7e0', color: '#b06000', border: '1px solid #fce8b2', fontWeight: 600 }}>
-                              GR: Partial
-                            </span>
-                          )}
-                        </div>
+                        )}
+                        {(o.goodsReceiptStatus === 'POSTED' || o.goodsReceiptStatus === 'PARTIAL' || parseFloat(o.deliveredQty) > 0) && (
+                          <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#e8f0fe', color: '#1a73e8', border: '1px solid #aecbfa', fontWeight: 600 }}>
+                            GR Posted
+                          </span>
+                        )}
+
+                        {o.lastSapSyncStatus === 'FAILED' && (
+                          <span style={{ fontSize: '0.65rem', color: '#b91c1c', fontWeight: 700 }} title={o.lastSapSyncError || 'Sync failed'}>
+                            ⚠ Sync Fail
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td>{o.plannedStartDate}</td>

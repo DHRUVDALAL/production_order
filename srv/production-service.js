@@ -95,6 +95,33 @@ export default class ProductionService extends cds.ApplicationService {
                         await INSERT.into('sap.production.portal.Materials').entries(m);
                     }
                 }
+                // Clean up existing orders where SAP Production Order Number exists but systemStatus/status is DRAFT
+                const legacyDraftOrders = await SELECT.from('sap.production.portal.ProductionOrders')
+                    .where({ status: 'DRAFT' })
+                    .and('orderNumber is not null');
+                for (const legacyOrder of legacyDraftOrders) {
+                    if (legacyOrder.orderNumber && legacyOrder.orderNumber.trim() !== '') {
+                        let targetStatus = 'CRTD';
+                        try {
+                            const sapOrders = await sapOrderSrv.run(
+                                SELECT.from(A_ProductionOrder_2).where({ ManufacturingOrder: legacyOrder.orderNumber })
+                            );
+                            if (sapOrders && sapOrders.length > 0) {
+                                targetStatus = deriveOrderStatus(sapOrders[0]);
+                            }
+                        } catch (err) {
+                            console.warn(`[DATA MIGRATION] Could not fetch SAP status for legacy draft order ${legacyOrder.orderNumber}, defaulting to CRTD:`, err.message);
+                        }
+                        await UPDATE('sap.production.portal.ProductionOrders')
+                            .set({
+                                status: targetStatus,
+                                systemStatus: targetStatus,
+                                portalWorkflowStep: targetStatus === 'CRTD' ? 'CRTD' : targetStatus
+                            })
+                            .where({ ID: legacyOrder.ID });
+                        console.log(`[DATA MIGRATION] Corrected legacy SAP order ${legacyOrder.orderNumber} from DRAFT to ${targetStatus}`);
+                    }
+                }
             } catch (err) {
                 console.error('[BOOTSTRAP SEED ERROR]', err);
             }
@@ -108,6 +135,7 @@ export default class ProductionService extends cds.ApplicationService {
         const isSet = (flag) => String(flag || '').trim().toUpperCase() === 'X';
 
         const deriveOrderStatus = (o = {}) => {
+            if (isSet(o.OrderIsMarkedForDeletion) || isSet(o.OrderIsDeleted) || isSet(o.DeletionFlag) || o.deletionFlag === true) return 'DLFL';
             if (isSet(o.OrderIsClosed))                 return 'CLSD';
             if (isSet(o.OrderIsTechnicallyCompleted))   return 'TECO';
             if (isSet(o.OrderIsConfirmed))              return 'CNF';
@@ -350,6 +378,7 @@ export default class ProductionService extends cds.ApplicationService {
                         else if (totalCompIssued > 0 || netIssuedQty > 0) portalStep = 'GI';
                         else if (['REL', 'MACA', 'CRTD'].includes(systemStatus)) portalStep = systemStatus === 'CRTD' ? 'CRTD' : 'REL';
 
+                        const syncTimestamp = new Date().toISOString();
                         const orderData = {
                             orderNumber     : sapOrder.ManufacturingOrder,
                             material_ID     : mat?.ID || null,
@@ -365,7 +394,10 @@ export default class ProductionService extends cds.ApplicationService {
                             portalWorkflowStep: portalStep,
                             plannedStartDate: sapOrder.MfgOrderPlannedStartDate || null,
                             plannedEndDate  : sapOrder.MfgOrderPlannedEndDate   || null,
-                            actualStartDate : sapOrder.MfgOrderActualReleaseDate || null
+                            actualStartDate : sapOrder.MfgOrderActualReleaseDate || null,
+                            lastSapSyncAt   : syncTimestamp,
+                            lastSapSyncStatus: 'SUCCESS',
+                            lastSapSyncError: null
                         };
 
                         if (existing) {
@@ -443,6 +475,77 @@ export default class ProductionService extends cds.ApplicationService {
                                 }
                             }
                         } catch (compErr) {}
+                        // Auto-generate Type 03 and Type 04 Inspection Lots if missing
+                        try {
+                            const localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
+                                .where({ orderNumber: sapOrder.ManufacturingOrder });
+
+                            if (localOrder) {
+                                const ops = await SELECT.from('sap.production.portal.OrderOperations').where({ order_ID: localOrder.ID });
+                                const qualOp = ops.find(o => (o.description || '').toLowerCase().includes('quality') || (o.description || '').toLowerCase().includes('inspection') || o.sequence === 30);
+                                const lastOp = ops.length ? ops.reduce((prev, curr) => (curr.sequence > prev.sequence ? curr : prev)) : null;
+
+                                // Type 03 In-Process Inspection Lot
+                                if (qualOp) {
+                                    const existing03 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                                        .where({ order_ID: localOrder.ID, inspectionType: '03' });
+                                    if (!existing03) {
+                                        const lotNum03 = '03' + Math.floor(1000000000 + Math.random() * 9000000000);
+                                        await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                                            lotNumber          : lotNum03,
+                                            order_ID           : localOrder.ID,
+                                            material_ID        : localOrder.material_ID,
+                                            plant_ID           : localOrder.plant_ID,
+                                            operation_ID       : qualOp.ID,
+                                            operationSequence  : qualOp.sequence,
+                                            inspectionType     : '03',
+                                            inspectionTypeDesc : 'In-Process Inspection',
+                                            inspectionStage    : 'IN_PROCESS',
+                                            lotQty             : localOrder.targetQty || 1,
+                                            inspectedQty       : 0,
+                                            approvedQty        : 0,
+                                            rejectedQty        : 0,
+                                            resultsRecorded    : false,
+                                            resultsStatus      : 'PENDING',
+                                            usageDecisionStatus: 'PENDING',
+                                            usageDecision      : '',
+                                            status             : 'CREATED'
+                                        });
+                                        console.log(`[QM AUTO-GEN] Generated Type 03 Lot ${lotNum03} for Order ${sapOrder.ManufacturingOrder}`);
+                                    }
+                                }
+
+                                // Type 04 Post-Production Inspection Lot
+                                const existing04 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                                    .where({ order_ID: localOrder.ID, inspectionType: '04' });
+                                if (!existing04) {
+                                    const lotNum04 = '04' + Math.floor(1000000000 + Math.random() * 9000000000);
+                                    await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                                        lotNumber          : lotNum04,
+                                        order_ID           : localOrder.ID,
+                                        material_ID        : localOrder.material_ID,
+                                        plant_ID           : localOrder.plant_ID,
+                                        operation_ID       : lastOp?.ID || null,
+                                        operationSequence  : lastOp?.sequence || 40,
+                                        inspectionType     : '04',
+                                        inspectionTypeDesc : 'Post-Production Inspection',
+                                        inspectionStage    : 'POST_PRODUCTION',
+                                        lotQty             : localOrder.targetQty || 1,
+                                        inspectedQty       : 0,
+                                        approvedQty        : 0,
+                                        rejectedQty        : 0,
+                                        resultsRecorded    : false,
+                                        resultsStatus      : 'PENDING',
+                                        usageDecisionStatus: 'PENDING',
+                                        usageDecision      : '',
+                                        status             : 'CREATED'
+                                    });
+                                    console.log(`[QM AUTO-GEN] Generated Type 04 Lot ${lotNum04} for Order ${sapOrder.ManufacturingOrder}`);
+                                }
+                            }
+                        } catch (qmErr) {
+                            console.warn(`[QM AUTO-GEN Notice] ${qmErr.message}`);
+                        }
                     }
 
                     console.log(`[SAP BACKGROUND SYNC] Complete: ${updatedCount} orders processed`);
@@ -476,6 +579,105 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ================================================================
+        // READ HANDLER: QualityInspectionLots
+        // Ensures all production orders have their Type 03 and Type 04 inspection lots generated
+        // ================================================================
+        this.before('READ', 'QualityInspectionLots', async (req) => {
+            try {
+                const orders = await SELECT.from('sap.production.portal.ProductionOrders');
+                for (const order of (orders || [])) {
+                    const ops = await SELECT.from('sap.production.portal.OrderOperations').where({ order_ID: order.ID });
+                    const qualOp = ops.find(o => (o.description || '').toLowerCase().includes('quality') || (o.description || '').toLowerCase().includes('inspection') || o.sequence === 30);
+                    const lastOp = ops.length ? ops.reduce((prev, curr) => (curr.sequence > prev.sequence ? curr : prev)) : null;
+
+                    // Type 03 In-Process Inspection Lot
+                    if (qualOp) {
+                        const existing03 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                            .where({ order_ID: order.ID, inspectionType: '03' });
+                        if (!existing03) {
+                            const lotNum03 = '03' + Math.floor(1000000000 + Math.random() * 9000000000);
+                            await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                                lotNumber          : lotNum03,
+                                order_ID           : order.ID,
+                                material_ID        : order.material_ID,
+                                plant_ID           : order.plant_ID,
+                                operation_ID       : qualOp.ID,
+                                operationSequence  : qualOp.sequence,
+                                inspectionType     : '03',
+                                inspectionTypeDesc : 'In-Process Inspection',
+                                inspectionStage    : 'IN_PROCESS',
+                                lotQty             : order.targetQty || 1,
+                                inspectedQty       : 0,
+                                approvedQty        : 0,
+                                rejectedQty        : 0,
+                                resultsRecorded    : false,
+                                resultsStatus      : 'PENDING',
+                                usageDecisionStatus: 'PENDING',
+                                usageDecision      : '',
+                                status             : 'CREATED'
+                            });
+                            console.log(`[QM ON-READ AUTO-GEN] Created Type 03 Lot ${lotNum03} for Order ${order.orderNumber}`);
+                        }
+                    }
+
+                    // Type 04 Post-Production Inspection Lot
+                    const existing04 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                        .where({ order_ID: order.ID, inspectionType: '04' });
+                    if (!existing04) {
+                        const lotNum04 = '04' + Math.floor(1000000000 + Math.random() * 9000000000);
+                        await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                            lotNumber          : lotNum04,
+                            order_ID           : order.ID,
+                            material_ID        : order.material_ID,
+                            plant_ID           : order.plant_ID,
+                            operation_ID       : lastOp?.ID || null,
+                            operationSequence  : lastOp?.sequence || 40,
+                            inspectionType     : '04',
+                            inspectionTypeDesc : 'Post-Production Inspection',
+                            inspectionStage    : 'POST_PRODUCTION',
+                            lotQty             : order.targetQty || 1,
+                            inspectedQty       : 0,
+                            approvedQty        : 0,
+                            rejectedQty        : 0,
+                            resultsRecorded    : false,
+                            resultsStatus      : 'PENDING',
+                            usageDecisionStatus: 'PENDING',
+                            usageDecision      : '',
+                            status             : 'CREATED'
+                        });
+                        console.log(`[QM ON-READ AUTO-GEN] Created Type 04 Lot ${lotNum04} for Order ${order.orderNumber}`);
+                    }
+                }
+            } catch (err) {
+                console.warn('[QM ON-READ AUTO-GEN Notice]', err.message);
+            }
+        });
+
+        // ================================================================
+        // CREATE HANDLER: GoodsMovements
+        // Validates DLFL (Deletion Flag) status before allowing 261 Goods Issue
+        // ================================================================
+        this.before('CREATE', 'GoodsMovements', async (req) => {
+            const data = req.data || {};
+            if (data.movementType === '261') {
+                let order = null;
+                if (data.order_ID) {
+                    order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: data.order_ID });
+                } else if (data.orderNumber) {
+                    order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: data.orderNumber });
+                }
+                if (order) {
+                    const isDlfl = order.deletionFlag === true ||
+                                   String(order.systemStatus || '').includes('DLFL') ||
+                                   String(order.status || '').includes('DLFL');
+                    if (isDlfl) {
+                        return req.error(400, `Goods Issue cannot be posted for Production Order ${order.orderNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
+                    }
+                }
+            }
+        });
+
+        // ================================================================
         // READ HANDLER: GoodsMovements
         // Syncs live Material Documents from SAP → local DB
         // ================================================================
@@ -502,11 +704,19 @@ export default class ProductionService extends cds.ApplicationService {
                         const mat     = await resolveOrCreateMaterial(item.Material, plant?.ID);
                         const sloc    = await resolveOrCreateSloc(item.StorageLocation, plant?.ID);
 
-                        // Match to local production order
+                        // Match to local production order (normalized string & leading zero tolerance)
                         let localOrder = null;
                         if (item.ManufacturingOrder) {
+                            const rawMfgOrder = String(item.ManufacturingOrder).trim();
+                            const normMfgOrder = rawMfgOrder.replace(/^0+/, '');
+                            
                             localOrder = await SELECT.one.from('sap.production.portal.ProductionOrders')
-                                .where({ orderNumber: item.ManufacturingOrder });
+                                .where({ orderNumber: rawMfgOrder });
+                            
+                            if (!localOrder && normMfgOrder) {
+                                const allLocalOrders = await SELECT.from('sap.production.portal.ProductionOrders');
+                                localOrder = (allLocalOrders || []).find(o => (o.orderNumber || '').replace(/^0+/, '') === normMfgOrder);
+                            }
                         }
 
                         const mvtNum = `${doc.MaterialDocument}-${item.MaterialDocumentItem}`;
@@ -596,24 +806,25 @@ export default class ProductionService extends cds.ApplicationService {
         };
 
         // ----------------------------------------------------------------
-        // BEFORE CREATE ORDER: Validate, assign DRAFT status
+        // BEFORE CREATE ORDER: Validate and assign initial status
         // ----------------------------------------------------------------
         this.before('CREATE', 'ProductionOrders', async (req) => {
             const order = req.data;
             if (!order.status) {
-                order.status = 'DRAFT';
+                order.status = 'CRTD';
             }
             if (order.targetQty <= 0) {
                 return req.error(400, 'Order Target Quantity must be greater than zero.');
             }
 
-            // When creating directly in CRTD status: create the order in S/4
-            // first, then adopt the operations and components it exploded from
-            // the real BOM and routing. Exploding locally first would attach
-            // demo master data to a genuine SAP material.
+            // When creating in CRTD status: create the order in S/4 first,
+            // then adopt the operations and components it exploded from the real BOM and routing.
             if (order.status === 'CRTD') {
                 await this._syncOrderToSAP(sapOrderSrv, A_ProductionOrder_2, order, req);
                 if (req.errors?.length) return;
+
+                order.systemStatus = 'CRTD';
+                order.portalWorkflowStep = 'CRTD';
 
                 const structure = await adoptSapOrderStructure(order.orderNumber, order.plant_ID);
                 if (structure.operations.length || structure.components.length) {
@@ -621,9 +832,38 @@ export default class ProductionService extends cds.ApplicationService {
                     order.components = structure.components;
                     console.log(`[SAP] Order ${order.orderNumber}: adopted ${structure.operations.length} operation(s) and ${structure.components.length} component(s) from SAP.`);
                 } else {
-                    // SAP produced no structure (e.g. no production version) —
-                    // fall back to local master data for this material.
                     await this._explodeBOMAndRouting(order, req);
+                }
+            } else if (order.status === 'DRAFT') {
+                order.systemStatus = 'DRAFT';
+                order.portalWorkflowStep = 'DRAFT';
+            }
+        });
+
+        // ----------------------------------------------------------------
+        // AFTER CREATE ORDER: Fetch actual SAP status if order exists in SAP
+        // ----------------------------------------------------------------
+        this.after('CREATE', 'ProductionOrders', async (createdOrder, req) => {
+            if (createdOrder.orderNumber && createdOrder.status !== 'DRAFT') {
+                try {
+                    const sapOrders = await sapOrderSrv.run(
+                        SELECT.from(A_ProductionOrder_2).where({ ManufacturingOrder: createdOrder.orderNumber })
+                    );
+                    if (sapOrders && sapOrders.length > 0) {
+                        const actualStatus = deriveOrderStatus(sapOrders[0]);
+                        await UPDATE('sap.production.portal.ProductionOrders')
+                            .set({
+                                systemStatus: actualStatus,
+                                status: actualStatus,
+                                portalWorkflowStep: actualStatus === 'CRTD' ? 'CRTD' : actualStatus
+                            })
+                            .where({ ID: createdOrder.ID });
+                        createdOrder.systemStatus = actualStatus;
+                        createdOrder.status = actualStatus;
+                        createdOrder.portalWorkflowStep = actualStatus === 'CRTD' ? 'CRTD' : actualStatus;
+                    }
+                } catch (err) {
+                    console.warn(`[AFTER CREATE] Could not fetch SAP status for order ${createdOrder.orderNumber}:`, err.message);
                 }
             }
         });
@@ -675,33 +915,36 @@ export default class ProductionService extends cds.ApplicationService {
                 }
 
                 orderUpdates.orderNumber = fullOrder.orderNumber;
+                orderUpdates.systemStatus = 'CRTD';
+                orderUpdates.portalWorkflowStep = 'CRTD';
                 orderUpdates.operations  = fullOrder.operations;
                 orderUpdates.components  = fullOrder.components;
             }
         });
 
         // ----------------------------------------------------------------
-        // ACTION: Check Material Availability (ATP check via SAP components)
+        // HELPER: Perform Fresh Availability Calculation
         // ----------------------------------------------------------------
-        this.on('checkMaterialAvailability', async (req) => {
-            const { orderId } = req.data;
-
+        const executeFreshAvailabilityCheck = async (orderId, req) => {
             const order = await orderRepo.selectWithOperationsAndComponents(orderId);
             if (!order) {
-                return req.error(404, `Production Order with ID ${orderId} not found.`);
+                if (req) req.error(404, `Production Order with ID ${orderId} not found.`);
+                throw new Error(`Production Order with ID ${orderId} not found.`);
             }
 
-            if (order.status !== 'CRTD' && order.status !== 'MACA') {
-                return req.error(400, `Material check only allowed in CRTD or MACA status. Current status is ${order.status}.`);
+            const sysStatus = order.systemStatus || order.status || 'CRTD';
+
+            // Lifecycle status eligibility check
+            if (['TECO', 'CLSD'].includes(sysStatus)) {
+                const msg = `Material availability check not allowed in status ${sysStatus}. Order is completed or closed.`;
+                if (req) req.error(400, msg);
+                throw new Error(msg);
             }
 
-            let shortageCount = 0;
-
-            // ----- Fetch SAP's own ATP result and order status -----
+            // Fetch SAP's ATP result if available
             let sapComponents  = [];
             let sapStatusCodes = [];
             try {
-                // Trigger real-time ATP check in SAP S/4HANA
                 const etag = await this._fetchSapOrderEtag(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
                 if (etag) {
                     await sapOrderSrv.send({
@@ -728,11 +971,9 @@ export default class ProductionService extends cds.ApplicationService {
                     .map(s => (s.StatusShortName || '').trim())
                     .filter(Boolean);
             } catch (err) {
-                console.warn('[SAP] ATP data unavailable, falling back to the local ledger:', err.message);
+                console.warn('[SAP] ATP data unavailable, falling back to current local ledger:', err.message);
             }
 
-            // SAP carries the same component on several reservation items, so
-            // aggregate per material before comparing.
             const sapByMaterial = new Map();
             for (const c of (sapComponents || [])) {
                 const agg = sapByMaterial.get(c.Material) || { required: 0, confirmed: 0 };
@@ -742,31 +983,30 @@ export default class ProductionService extends cds.ApplicationService {
             }
             const usingSapData = sapByMaterial.size > 0;
 
-            for (const component of order.components) {
-                // Local components carry a material UUID, not a code — the old
-                // code compared against component.componentMaterialCode, which
-                // is never populated, so no SAP row ever matched and every
-                // check silently fell through to the seeded local ledger.
+            let checkedCount = 0;
+            let availableCount = 0;
+            let partiallyAvailableCount = 0;
+            let unavailableCount = 0;
+
+            for (const component of (order.components || [])) {
+                checkedCount++;
                 const material = component.componentMaterial_ID
                     ? await SELECT.one.from('sap.production.portal.Materials')
                         .where({ ID: component.componentMaterial_ID })
                     : null;
                 const sapComp = material ? sapByMaterial.get(material.code) : null;
-                let hasShortage;
 
                 let availableQty = 0;
+                let reqQty = parseFloat(component.requiredQty) || 0;
                 let shortageQty = 0;
 
                 if (sapComp) {
-                    // ConfirmedAvailableQuantity is what SAP's ATP run could
-                    // actually confirm — the real availability figure.
                     availableQty = sapComp.confirmed;
-                    hasShortage = sapComp.confirmed < sapComp.required;
-                    if (hasShortage) {
-                        shortageQty = sapComp.required - sapComp.confirmed;
+                    if (availableQty < reqQty) {
+                        shortageQty = reqQty - availableQty;
                     }
                 } else {
-                    // Fallback: check local GoodsMovements ledger
+                    // Fetch CURRENT inventory from GoodsMovements ledger
                     const movements = await SELECT.from('sap.production.portal.GoodsMovements')
                         .where({
                             material_ID: component.componentMaterial_ID,
@@ -781,67 +1021,166 @@ export default class ProductionService extends cds.ApplicationService {
                             currentStock -= parseFloat(mov.quantity);
                         }
                     }
-                    availableQty = currentStock;
-                    hasShortage = currentStock < parseFloat(component.requiredQty);
-                    if (hasShortage) {
-                        shortageQty = parseFloat(component.requiredQty) - currentStock;
+                    availableQty = Math.max(0, currentStock);
+                    if (availableQty < reqQty) {
+                        shortageQty = reqQty - availableQty;
                     }
                 }
 
                 if (availableQty < 0) availableQty = 0;
                 if (shortageQty < 0) shortageQty = 0;
 
-                const componentStatus = hasShortage ? 'MSPT' : 'RESV';
-                if (hasShortage) shortageCount++;
+                // Component level status
+                let compStatus = 'RESV';
+                if (availableQty >= reqQty) {
+                    compStatus = 'RESV'; // Fully Available / Reserved
+                    availableCount++;
+                } else if (availableQty > 0) {
+                    compStatus = 'MSPT'; // Partially Available
+                    partiallyAvailableCount++;
+                } else {
+                    compStatus = 'MSPT'; // Unavailable
+                    unavailableCount++;
+                }
 
                 await UPDATE('sap.production.portal.OrderComponents')
                     .set({ 
-                        status: componentStatus,
+                        status: compStatus,
                         availableQty: availableQty,
                         shortageQty: shortageQty
                     })
                     .where({ ID: component.ID });
             }
 
-            // Update order status to MACA
+            // Calculate overall availability status
+            let overallStatus = 'AVAILABLE';
+            if (unavailableCount > 0 || (usingSapData && sapStatusCodes.includes('MSPT'))) {
+                overallStatus = 'NOT_AVAILABLE';
+            } else if (partiallyAvailableCount > 0) {
+                overallStatus = 'PARTIALLY_AVAILABLE';
+            }
+
+            const nowIso = new Date().toISOString();
+            
+            // Note: Do NOT change order.systemStatus or order.status lifecycle status!
+            // Update materialAvailabilityStatus and timestamp independently.
             await UPDATE('sap.production.portal.ProductionOrders')
-                .set({ status: 'MACA' })
+                .set({ 
+                    materialAvailabilityStatus: overallStatus,
+                    availabilityLastCheckedAt: nowIso
+                })
                 .where({ ID: order.ID });
 
-            // SAP's own MSPT (missing parts) flag is the verdict that actually
-            // governs whether a release will succeed — never report "available"
-            // over the top of it.
-            const sapSaysMissingParts = sapStatusCodes.includes('MSPT');
-            const source = usingSapData ? 'SAP ATP' : 'local ledger (SAP unavailable)';
-
-            let notifMsg;
-            if (shortageCount > 0) {
-                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: shortage in ${shortageCount} component(s).`;
-            } else if (sapSaysMissingParts) {
-                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: SAP reports missing parts (MSPT) for this order.`;
-            } else {
-                notifMsg = `Material availability check for Order ${order.orderNumber} [${source}]: all components fully available.`;
-            }
-            if (sapStatusCodes.length) {
-                notifMsg += ` SAP status: ${sapStatusCodes.join(', ')}.`;
-            }
-
-            // Surface SAP's verdict even if the per-component maths disagreed.
-            if (sapSaysMissingParts && shortageCount === 0) shortageCount = 1;
+            const shortageCount = unavailableCount + partiallyAvailableCount;
+            const source = usingSapData ? 'SAP ATP' : 'Current Ledger';
+            const message = overallStatus === 'AVAILABLE'
+                ? `Material availability check completed for Order ${order.orderNumber} [${source}]: All ${checkedCount} component(s) are fully available.`
+                : `Material Availability Check: Required components are not fully available for Production Order ${order.orderNumber}. ${shortageCount} component(s) have shortages and are only partially available.`;
 
             await INSERT.into('sap.production.portal.ProductionNotifications').entries({
                 type: shortageCount > 0 ? 'ALERT' : 'INFO',
                 order_ID: order.ID,
-                message: notifMsg,
+                message: message,
                 isRead: false
             });
 
-            await this._logAudit(req.headers['x-user-id'], 'CHECK_ATP', 'ProductionOrders', order.ID,
-                JSON.stringify({ status: order.status }),
-                JSON.stringify({ status: 'MACA', shortageCount })
+            await this._logAudit(req.headers['x-user-id'] || 'SYSTEM', 'CHECK_ATP', 'ProductionOrders', order.ID,
+                JSON.stringify({ previousAvailability: order.materialAvailabilityStatus }),
+                JSON.stringify({ materialAvailabilityStatus: overallStatus, shortageCount, timestamp: nowIso })
             );
 
-            return { success: true, shortageCount };
+            return {
+                success: true,
+                shortageCount,
+                overallStatus,
+                checkedCount,
+                availableCount,
+                partiallyAvailableCount,
+                unavailableCount,
+                lastCheckedAt: nowIso,
+                message
+            };
+        };
+
+        // ----------------------------------------------------------------
+        // ACTION: Check Material Availability
+        // ----------------------------------------------------------------
+        this.on('checkMaterialAvailability', async (req) => {
+            const { orderId } = req.data;
+            return await executeFreshAvailabilityCheck(orderId, req);
+        });
+
+        // ----------------------------------------------------------------
+        // ACTION: Reset Material Availability
+        // ----------------------------------------------------------------
+        this.on('resetMaterialAvailability', async (req) => {
+            const { orderId } = req.data;
+            const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+            if (!order) return req.error(404, `Production Order with ID ${orderId} not found.`);
+
+            const sysStatus = order.systemStatus || order.status || 'CRTD';
+            if (['TECO', 'CLSD'].includes(sysStatus)) {
+                return req.error(400, `Reset availability not allowed in status ${sysStatus}.`);
+            }
+
+            // Reset component-level availableQty and shortageQty
+            for (const component of (order.components || [])) {
+                await UPDATE('sap.production.portal.OrderComponents')
+                    .set({
+                        availableQty: 0,
+                        shortageQty: 0,
+                        status: 'RESV'
+                    })
+                    .where({ ID: component.ID });
+            }
+
+            // Reset order-level availability to NOT_CHECKED without modifying systemStatus/goodsIssueStatus/goodsReceiptStatus
+            await UPDATE('sap.production.portal.ProductionOrders')
+                .set({
+                    materialAvailabilityStatus: 'NOT_CHECKED',
+                    availabilityLastCheckedAt: null
+                })
+                .where({ ID: order.ID });
+
+            await this._logAudit(req.headers['x-user-id'] || 'SYSTEM', 'RESET_ATP', 'ProductionOrders', order.ID,
+                JSON.stringify({ previousAvailability: order.materialAvailabilityStatus }),
+                JSON.stringify({ materialAvailabilityStatus: 'NOT_CHECKED' })
+            );
+
+            return {
+                success: true,
+                overallStatus: 'NOT_CHECKED',
+                message: `Material availability reset to NOT_CHECKED for Order ${order.orderNumber || order.ID}.`
+            };
+        });
+
+        // ----------------------------------------------------------------
+        // ACTION: Reset & Check Material Availability
+        // ----------------------------------------------------------------
+        this.on('resetAndCheckMaterialAvailability', async (req) => {
+            const { orderId } = req.data;
+            const order = await orderRepo.selectWithOperationsAndComponents(orderId);
+            if (!order) return req.error(404, `Production Order with ID ${orderId} not found.`);
+
+            // Step 1: Clear previous availability commitments
+            for (const component of (order.components || [])) {
+                await UPDATE('sap.production.portal.OrderComponents')
+                    .set({
+                        availableQty: 0,
+                        shortageQty: 0,
+                        status: 'RESV'
+                    })
+                    .where({ ID: component.ID });
+            }
+            await UPDATE('sap.production.portal.ProductionOrders')
+                .set({
+                    materialAvailabilityStatus: 'NOT_CHECKED',
+                    availabilityLastCheckedAt: null
+                })
+                .where({ ID: order.ID });
+
+            // Step 2: Execute fresh availability calculation
+            return await executeFreshAvailabilityCheck(orderId, req);
         });
 
         // ----------------------------------------------------------------
@@ -1187,6 +1526,50 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Confirmed yield (${newCumulativeYield}) exceeds target quantity (${order.targetQty}) plus 10% tolerance.`);
             }
 
+            // Quality Gate Check for In-Process (Type 03) and Post-Production (Type 04)
+            const isQualityOp = (op.description || '').toLowerCase().includes('quality') || (op.description || '').toLowerCase().includes('inspection') || op.sequence === 30;
+            const isFinalOp = op.sequence === Math.max(...order.operations.map(o => o.sequence));
+
+            if (isQualityOp) {
+                let lot03 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                    .where({ order_ID: order.ID, inspectionType: '03', operationSequence: op.sequence });
+                
+                if (!lot03) {
+                    lot03 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                        .where({ order_ID: order.ID, inspectionType: '03' });
+                }
+
+                if (!lot03) {
+                    return req.error(400, `Quality inspection is active for Operation ${String(op.sequence).padStart(4, '0')}. Please complete Result Recording before confirming this operation.`);
+                }
+                if (!lot03.resultsRecorded || lot03.resultsStatus !== 'COMPLETED') {
+                    return req.error(400, `Quality inspection is active for Operation ${String(op.sequence).padStart(4, '0')}. Please complete Result Recording before confirming this operation.`);
+                }
+                if (lot03.usageDecisionStatus !== 'COMPLETED' || !lot03.usageDecision) {
+                    return req.error(400, `Quality inspection Result Recording for Operation ${String(op.sequence).padStart(4, '0')} is complete. Please complete the Usage Decision before confirming this operation.`);
+                }
+                if (lot03.usageDecision !== 'UDAC') {
+                    return req.error(400, `The Quality Inspection Lot for Operation ${String(op.sequence).padStart(4, '0')} was not accepted (${lot03.usageDecision}). Operation confirmation cannot proceed.`);
+                }
+            }
+
+            if (isFinalOp) {
+                const lot04 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                    .where({ order_ID: order.ID, inspectionType: '04' });
+                
+                if (lot04) {
+                    if (!lot04.resultsRecorded || lot04.resultsStatus !== 'COMPLETED') {
+                        return req.error(400, `Post-production quality inspection is active. Please complete Result Recording first before confirming the final operation.`);
+                    }
+                    if (lot04.usageDecisionStatus !== 'COMPLETED' || !lot04.usageDecision) {
+                        return req.error(400, `Post-production quality inspection Result Recording is complete. Please complete the Usage Decision before confirming the final operation.`);
+                    }
+                    if (lot04.usageDecision !== 'UDAC') {
+                        return req.error(400, `Post-production quality inspection was not accepted (${lot04.usageDecision}). Final operation confirmation cannot proceed.`);
+                    }
+                }
+            }
+
             // ----- POST confirmation to SAP -----
             let sapConfirmationCounter = null;
             try {
@@ -1264,12 +1647,44 @@ export default class ProductionService extends cds.ApplicationService {
                 })
                 .where({ ID: op.ID });
 
+            // Automatically generate Type 03 Inspection Lot when Operation prior to Quality Op is confirmed
+            const nextOp = order.operations.find(o => o.sequence > op.sequence);
+            if (nextOp && ((nextOp.description || '').toLowerCase().includes('quality') || (nextOp.description || '').toLowerCase().includes('inspection') || nextOp.sequence === 30)) {
+                const existing03 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                    .where({ order_ID: order.ID, inspectionType: '03', operationSequence: nextOp.sequence });
+                
+                if (!existing03) {
+                    const lotNum03 = '03' + Math.floor(1000000000 + Math.random() * 9000000000);
+                    await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                        lotNumber          : lotNum03,
+                        order_ID           : order.ID,
+                        material_ID        : order.material_ID,
+                        plant_ID           : order.plant_ID,
+                        operation_ID       : nextOp.ID,
+                        operationSequence  : nextOp.sequence,
+                        inspectionType     : '03',
+                        inspectionTypeDesc : 'In-Process Inspection',
+                        inspectionStage    : 'IN_PROCESS',
+                        lotQty             : newCumulativeYield || order.targetQty,
+                        inspectedQty       : 0,
+                        approvedQty        : 0,
+                        rejectedQty        : 0,
+                        resultsRecorded    : false,
+                        resultsStatus      : 'PENDING',
+                        usageDecisionStatus: 'PENDING',
+                        usageDecision      : '',
+                        status             : 'CREATED'
+                    });
+                    console.log(`[QM] Automatically generated Type 03 In-Process Inspection Lot ${lotNum03} for Operation ${nextOp.sequence}`);
+                }
+            }
+
             // ----- Backflush GI via SAP if final confirmation -----
             if (isFinalConfirmation) {
                 // Components carry a material UUID, not a code. Passing the
                 // UUID straight through makes SAP reject the goods issue with
                 // "The material number is longer than the length set".
-                const materialIds = [...new Set(order.components
+                const materialIds = [...new Set((order.components || [])
                     .map(c => c.componentMaterial_ID)
                     .filter(Boolean))];
                 const materialRows = materialIds.length
@@ -1279,7 +1694,7 @@ export default class ProductionService extends cds.ApplicationService {
                     : [];
                 const materialCodeById = new Map(materialRows.map(m => [m.ID, m.code]));
 
-                for (const comp of order.components) {
+                for (const comp of (order.components || [])) {
                     // Components flagged for backflush are issued by SAP as
                     // part of the confirmation itself. Posting our own 261
                     // would issue the stock a second time.
@@ -1347,29 +1762,43 @@ export default class ProductionService extends cds.ApplicationService {
             let finalOrderStatus = allConfirmed ? 'CNF' : 'PCNF';
 
             if (allConfirmed) {
-                const lotNum = '04' + Math.floor(1000000000 + Math.random() * 9000000000);
+                const existing04 = await SELECT.one.from('sap.production.portal.QualityInspectionLots')
+                    .where({ order_ID: order.ID, inspectionType: '04' });
 
-                await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
-                    lotNumber    : lotNum,
-                    order_ID     : order.ID,
-                    material_ID  : order.material_ID,
-                    plant_ID     : order.plant_ID,
-                    lotQty       : newCumulativeYield,
-                    inspectedQty : 0,
-                    approvedQty  : 0,
-                    rejectedQty  : 0,
-                    usageDecision: '',
-                    status       : 'CRTD'
-                });
+                if (!existing04) {
+                    const lotNum = '04' + Math.floor(1000000000 + Math.random() * 9000000000);
+                    const lastOp = order.operations.find(o => o.sequence === Math.max(...order.operations.map(op => op.sequence)));
 
-                finalOrderStatus = 'INSP';
+                    await INSERT.into('sap.production.portal.QualityInspectionLots').entries({
+                        lotNumber          : lotNum,
+                        order_ID           : order.ID,
+                        material_ID        : order.material_ID,
+                        plant_ID           : order.plant_ID,
+                        operation_ID       : lastOp?.ID || null,
+                        operationSequence  : lastOp?.sequence || 40,
+                        inspectionType     : '04',
+                        inspectionTypeDesc : 'Post-Production Inspection',
+                        inspectionStage    : 'POST_PRODUCTION',
+                        lotQty             : newCumulativeYield,
+                        inspectedQty       : 0,
+                        approvedQty        : 0,
+                        rejectedQty        : 0,
+                        resultsRecorded    : false,
+                        resultsStatus      : 'PENDING',
+                        usageDecisionStatus: 'PENDING',
+                        usageDecision      : '',
+                        status             : 'CREATED'
+                    });
 
-                await INSERT.into('sap.production.portal.ProductionNotifications').entries({
-                    type    : 'ALERT',
-                    order_ID: order.ID,
-                    message : `Operation confirmations complete. Quality Inspection Lot ${lotNum} generated. Order is on Quality Hold.`,
-                    isRead  : false
-                });
+                    finalOrderStatus = 'INSP';
+
+                    await INSERT.into('sap.production.portal.ProductionNotifications').entries({
+                        type    : 'ALERT',
+                        order_ID: order.ID,
+                        message : `Operation confirmations complete. Quality Inspection Lot ${lotNum} generated. Order is on Quality Hold.`,
+                        isRead  : false
+                    });
+                }
             }
 
             await UPDATE('sap.production.portal.ProductionOrders')
@@ -1436,6 +1865,40 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ----------------------------------------------------------------
+        // ACTION: Record Result (Result Recording for Quality Inspection)
+        // ----------------------------------------------------------------
+        this.on('recordResult', async (req) => {
+            const { lotId, inspectedQty } = req.data;
+
+            const lot = await SELECT.one.from('sap.production.portal.QualityInspectionLots').where({ ID: lotId });
+            if (!lot) return req.error(404, `Inspection Lot ${lotId} not found.`);
+
+            const inspQtyVal = parseFloat(inspectedQty);
+            if (isNaN(inspQtyVal) || inspQtyVal <= 0) {
+                return req.error(400, 'Inspected Quantity must be a positive numeric value.');
+            }
+
+            await UPDATE('sap.production.portal.QualityInspectionLots')
+                .set({
+                    resultsRecorded    : true,
+                    resultsStatus      : 'COMPLETED',
+                    resultsRecordedAt  : new Date().toISOString(),
+                    usageDecisionStatus: 'PENDING',
+                    inspectedQty       : inspQtyVal,
+                    status             : 'INSP'
+                })
+                .where({ ID: lot.ID });
+
+            console.log(`[QM] Result Recording completed for Lot ${lot.lotNumber} (Type ${lot.inspectionType || '04'}). Inspected Qty: ${inspQtyVal}`);
+
+            return {
+                success: true,
+                message: `Result Recording completed for Inspection Lot ${lot.lotNumber}.`,
+                status : 'INSP'
+            };
+        });
+
+        // ----------------------------------------------------------------
         // ACTION: Record Quality Inspection Usage Decision
         // ----------------------------------------------------------------
         this.on('submitUsageDecision', async (req) => {
@@ -1444,8 +1907,12 @@ export default class ProductionService extends cds.ApplicationService {
             const lot = await SELECT.one.from('sap.production.portal.QualityInspectionLots').where({ ID: lotId });
             if (!lot) return req.error(404, `Inspection Lot ${lotId} not found.`);
 
-            if (lot.status === 'COMP') {
+            if (lot.usageDecisionStatus === 'COMPLETED' || lot.status === 'COMPLETED' || lot.status === 'APPROVED' || lot.status === 'REJECTED') {
                 return req.error(400, 'Usage decision has already been submitted for this inspection lot.');
+            }
+
+            if (!lot.resultsRecorded || lot.resultsStatus !== 'COMPLETED') {
+                return req.error(400, `Result Recording is pending for Inspection Lot ${lot.lotNumber}. Complete Result Recording before submitting Usage Decision.`);
             }
 
             const totalPost = parseFloat(approvedQty) + parseFloat(rejectedQty);
@@ -1453,60 +1920,75 @@ export default class ProductionService extends cds.ApplicationService {
                 return req.error(400, `Sum of Approved (${approvedQty}) and Rejected (${rejectedQty}) must equal Inspection Lot quantity (${lot.lotQty}).`);
             }
 
+            const isAccepted = usageDecision === 'UDAC';
+            const lotStatus = isAccepted ? 'APPROVED' : 'REJECTED';
+
             await UPDATE('sap.production.portal.QualityInspectionLots')
-                .set({ status: 'COMP', approvedQty, rejectedQty, usageDecision, decisionDate: new Date().toISOString() })
+                .set({
+                    status             : lotStatus,
+                    usageDecisionStatus: 'COMPLETED',
+                    approvedQty,
+                    rejectedQty,
+                    usageDecision,
+                    decisionDate       : new Date().toISOString()
+                })
                 .where({ ID: lot.ID });
 
             const order = await orderRepo.selectById(lot.order_ID);
 
-            if (usageDecision === 'UDAC') {
-                await UPDATE('sap.production.portal.ProductionOrders')
-                    .set({ status: 'CNF' })
-                    .where({ ID: lot.order_ID });
+            if (isAccepted) {
+                // If Type 04 post-production lot, update order status to CNF if all ops confirmed
+                if (lot.inspectionType === '04') {
+                    await UPDATE('sap.production.portal.ProductionOrders')
+                        .set({ status: 'CNF' })
+                        .where({ ID: lot.order_ID });
+                }
 
                 await INSERT.into('sap.production.portal.ProductionNotifications').entries({
                     type    : 'INFO',
                     order_ID: lot.order_ID,
-                    message : `Quality Inspection approved. Production Order ${order.orderNumber} is released for Goods Receipt.`,
+                    message : `Quality Inspection (${lot.inspectionTypeDesc || lot.inspectionType}) approved. Production Order ${order.orderNumber} is released.`,
                     isRead  : false
                 });
             } else {
-                // ----- Post rejection to SAP as blocked stock (350) -----
-                try {
-                    await postSapMaterialDocument({
-                        orderNumber    : order.orderNumber,
-                        material       : order.materialCode || order.material_ID,
-                        plant          : order.plantCode || '',
-                        storageLocation: order.storageLocationCode || '',
-                        movementType   : '350',
-                        quantity       : rejectedQty,
-                        unit           : 'PC',
-                        headerText     : `QM rejection for order ${order.orderNumber}`
+                // ----- Post rejection to SAP as blocked stock (350) for Type 04 -----
+                if (lot.inspectionType === '04') {
+                    try {
+                        await postSapMaterialDocument({
+                            orderNumber    : order.orderNumber,
+                            material       : order.materialCode || order.material_ID,
+                            plant          : order.plantCode || '',
+                            storageLocation: order.storageLocationCode || '',
+                            movementType   : '350',
+                            quantity       : rejectedQty,
+                            unit           : 'PC',
+                            headerText     : `QM rejection for order ${order.orderNumber}`
+                        });
+                    } catch (err) {
+                        console.error('[SAP] QM Block 350 posting failed:', err.message);
+                        return req.error(500, `SAP Blocked Stock Error: ${err.message}`);
+                    }
+
+                    // Mirror to local
+                    await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                        movementNumber  : 'QM' + Math.floor(100000 + Math.random() * 900000),
+                        order_ID        : lot.order_ID,
+                        material_ID     : lot.material_ID,
+                        plant_ID        : lot.plant_ID,
+                        storageLocation_ID: order.storageLocation_ID,
+                        movementType    : '350',
+                        quantity        : rejectedQty,
+                        unit            : 'PC',
+                        postingDate     : new Date().toISOString().split('T')[0]
                     });
-                } catch (err) {
-                    console.error('[SAP] QM Block 350 posting failed:', err.message);
-                    return req.error(500, `SAP Blocked Stock Error: ${err.message}`);
+
+                    // A rejected inspection also completes the order — tell SAP.
+                    await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
+
+                    await UPDATE('sap.production.portal.ProductionOrders')
+                        .set({ status: 'TECO' })
+                        .where({ ID: lot.order_ID });
                 }
-
-                // Mirror to local
-                await INSERT.into('sap.production.portal.GoodsMovements').entries({
-                    movementNumber  : 'QM' + Math.floor(100000 + Math.random() * 900000),
-                    order_ID        : lot.order_ID,
-                    material_ID     : lot.material_ID,
-                    plant_ID        : lot.plant_ID,
-                    storageLocation_ID: order.storageLocation_ID,
-                    movementType    : '350',
-                    quantity        : rejectedQty,
-                    unit            : 'PC',
-                    postingDate     : new Date().toISOString().split('T')[0]
-                });
-
-                // A rejected inspection also completes the order — tell SAP.
-                await this._technicallyCompleteOrder(sapOrderSrv, A_ProductionOrder_2, order.orderNumber);
-
-                await UPDATE('sap.production.portal.ProductionOrders')
-                    .set({ status: 'TECO' })
-                    .where({ ID: lot.order_ID });
 
                 await INSERT.into('sap.production.portal.ProductionNotifications').entries({
                     type    : 'ALERT',
@@ -1525,7 +2007,7 @@ export default class ProductionService extends cds.ApplicationService {
         });
 
         // ----------------------------------------------------------------
-        // ACTION: Post Goods Receipt (GR 101) via SAP Material Document API
+        // ACTION: Post Goods Receipt (101)
         // ----------------------------------------------------------------
         this.on('postGoodsReceipt', async (req) => {
             const { orderId, quantity, slocId, postingDate } = req.data;
@@ -1533,17 +2015,14 @@ export default class ProductionService extends cds.ApplicationService {
             const order = await orderRepo.selectById(orderId);
             if (!order) return req.error(404, `Production Order ${orderId} not found.`);
 
-            // Material / plant / storage location codes live behind
-            // association IDs — without this the GR posts a UUID as the
-            // material number and SAP rejects it as too long.
             await this._resolveOrderCodes(order);
 
-            if (order.status !== 'CNF' && order.status !== 'PCNF') {
-                return req.error(400, `Goods Receipt not permitted in status ${order.status}. Must be in Confirmed (CNF) state.`);
+            if (order.status !== 'CNF' && order.status !== 'PCNF' && order.status !== 'INSP' && order.status !== 'PDLV') {
+                return req.error(400, `Goods Receipt not permitted in status ${order.status}. Must be in Confirmed (CNF/PCNF/PDLV) state.`);
             }
 
-            const currentDelivered = parseFloat(order.deliveredQty);
-            const target           = parseFloat(order.targetQty);
+            const currentDelivered = parseFloat(order.deliveredQty || 0);
+            const target           = parseFloat(order.targetQty || 0);
             const proposedTotal    = currentDelivered + parseFloat(quantity);
             const maxAllowed       = target * 1.10;
 
@@ -1573,7 +2052,6 @@ export default class ProductionService extends cds.ApplicationService {
             }
 
             // Mirror to local GoodsMovements
-            const slocRecord = slocId ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: slocId }) : null;
             await INSERT.into('sap.production.portal.GoodsMovements').entries({
                 movementNumber  : docNum,
                 order_ID        : order.ID,
@@ -1583,7 +2061,7 @@ export default class ProductionService extends cds.ApplicationService {
                 movementType    : '101',
                 quantity,
                 unit            : 'PC',
-                postingDate     : new Date().toISOString().split('T')[0]
+                postingDate     : postingDate || new Date().toISOString().split('T')[0]
             });
 
             const finalDelivered = currentDelivered + parseFloat(quantity);
@@ -1627,6 +2105,288 @@ export default class ProductionService extends cds.ApplicationService {
                 JSON.stringify({ deliveredQty: currentDelivered, status: order.status }),
                 JSON.stringify({ deliveredQty: finalDelivered, status: isFullDelivery ? 'TECO' : newStatus, sapDoc: docNum })
             );
+
+            return { success: true, docNum };
+        });
+
+        // ----------------------------------------------------------------
+        // ACTION: Cancel Goods Receipt (102 Reversal)
+        // ----------------------------------------------------------------
+        this.on('cancelGoodsReceipt', async (req) => {
+            const { orderId, postingDate } = req.data;
+
+            const order = await orderRepo.selectById(orderId);
+            if (!order) return req.error(404, `Production Order ${orderId} not found.`);
+
+            await this._resolveOrderCodes(order);
+
+            // Find latest active 101 Goods Receipt document for this order
+            const last101 = await SELECT.one.from('sap.production.portal.GoodsMovements')
+                .where({ order_ID: order.ID, movementType: '101', status: 'POSTED' })
+                .orderBy('createdAt desc');
+
+            if (!last101) {
+                return req.error(400, `No active Goods Receipt (101) document found to cancel for Order ${order.orderNumber}.`);
+            }
+
+            const reverseQty = parseFloat(last101.quantity);
+            let docNum = 'GRC' + Math.floor(10000000 + Math.random() * 90000000);
+
+            // Post 102 Reversal to SAP
+            try {
+                const sap102 = await postSapMaterialDocument({
+                    orderNumber    : order.orderNumber,
+                    material       : order.materialCode,
+                    plant          : order.plantCode,
+                    storageLocation: order.storageLocationCode || '',
+                    movementType   : '102',
+                    quantity       : reverseQty,
+                    unit           : last101.unit || 'PC',
+                    postingDate,
+                    headerText     : `Reversal 102 for doc ${last101.movementNumber}`
+                });
+                docNum = sap102?.MaterialDocument || docNum;
+                console.log(`[SAP] GR 102 Reversal posted: ${docNum} (reversing ${last101.movementNumber})`);
+            } catch (err) {
+                console.error('[SAP] GR 102 Reversal failed:', err.message);
+                return req.error(500, `SAP Goods Receipt Reversal Error: ${err.message}`);
+            }
+
+            // Record 102 Reversal in GoodsMovements history
+            await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                movementNumber    : docNum,
+                order_ID          : order.ID,
+                material_ID       : order.material_ID,
+                plant_ID          : order.plant_ID,
+                storageLocation_ID: last101.storageLocation_ID || order.storageLocation_ID,
+                movementType      : '102',
+                quantity          : reverseQty,
+                unit              : last101.unit || 'PC',
+                reversalRefDoc    : last101.movementNumber,
+                postingDate       : postingDate || new Date().toISOString().split('T')[0]
+            });
+
+            // Mark original 101 as CANCELLED so subsequent lookup finds older 101s if any
+            await UPDATE('sap.production.portal.GoodsMovements')
+                .set({ status: 'CANCELLED', cancelledByDoc: docNum })
+                .where({ ID: last101.ID });
+
+            // Reverse delivered quantity and restore order status
+            const newDeliveredQty = Math.max(0, parseFloat(order.deliveredQty || 0) - reverseQty);
+            const restoredStatus = newDeliveredQty <= 0 ? 'CNF' : 'PDLV';
+
+            await UPDATE('sap.production.portal.ProductionOrders')
+                .set({
+                    deliveredQty: newDeliveredQty,
+                    status      : restoredStatus
+                })
+                .where({ ID: order.ID });
+
+            return { success: true, docNum };
+        });
+
+        // ----------------------------------------------------------------
+        // ACTION: Post Goods Issue (261)
+        // ----------------------------------------------------------------
+        this.on('postGoodsIssue', async (req) => {
+            const { orderId, componentId, quantity, slocId, postingDate } = req.data;
+
+            const order = await orderRepo.selectById(orderId);
+            if (!order) return req.error(404, `Production Order ${orderId} not found.`);
+
+            const isDlfl = order.deletionFlag === true ||
+                           String(order.systemStatus || '').includes('DLFL') ||
+                           String(order.status || '').includes('DLFL');
+            if (isDlfl) {
+                return req.error(400, `Goods Issue cannot be posted for Production Order ${order.orderNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
+            }
+
+            await this._resolveOrderCodes(order);
+
+            const comp = (order.components || []).find(c => c.ID === componentId) || await SELECT.one.from('sap.production.portal.OrderComponents').where({ ID: componentId });
+            if (!comp) return req.error(404, `Component ${componentId} not found on Order ${order.orderNumber}.`);
+
+            const compMat = await SELECT.one.from('sap.production.portal.Materials').where({ ID: comp.componentMaterial_ID });
+            const componentCode = compMat?.code || comp.componentMaterialCode || 'COMP-001';
+
+            // Check if there is an active unreversed 261 Goods Issue for this component
+            const active261 = await SELECT.one.from('sap.production.portal.GoodsMovements')
+                .where({
+                    order_ID    : order.ID,
+                    material_ID : comp.componentMaterial_ID,
+                    movementType: '261'
+                })
+                .and('status = \'POSTED\' or isCancelled != 1')
+                .and('cancelledByDoc is null or cancelledByDoc = \'\'');
+
+            if (active261 && !active261.isCancelled && active261.status !== 'CANCELLED') {
+                return req.error(400, `Goods Issue (261) already exists and is active (Doc: ${active261.movementNumber}) for component ${componentCode} on Order ${order.orderNumber}. Reverse current Goods Issue before posting a new one.`);
+            }
+
+            const issueQty = parseFloat(quantity || (parseFloat(comp.requiredQty) - parseFloat(comp.issuedQty)));
+            if (isNaN(issueQty) || issueQty <= 0) {
+                return req.error(400, 'Goods Issue quantity must be greater than zero.');
+            }
+
+            let docNum = 'GI' + Math.floor(10000000 + Math.random() * 90000000);
+
+            try {
+                const sapGI = await postSapMaterialDocument({
+                    orderNumber    : order.orderNumber,
+                    material       : componentCode,
+                    plant          : order.plantCode || '',
+                    storageLocation: order.storageLocationCode || '',
+                    movementType   : '261',
+                    quantity       : issueQty,
+                    unit           : comp.unit || 'PC',
+                    postingDate,
+                    headerText     : `GI 261 for order ${order.orderNumber}`
+                });
+                docNum = sapGI?.MaterialDocument || docNum;
+                console.log(`[SAP] GI 261 posted: ${docNum} for material ${componentCode}`);
+            } catch (err) {
+                console.error('[SAP] GI 261 failed:', err.message);
+                return req.error(500, `SAP Goods Issue Error: ${err.message}`);
+            }
+
+            await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                movementNumber    : docNum,
+                order_ID          : order.ID,
+                material_ID       : comp.componentMaterial_ID,
+                plant_ID          : order.plant_ID,
+                storageLocation_ID: slocId || order.storageLocation_ID,
+                movementType      : '261',
+                quantity          : issueQty,
+                unit              : comp.unit || 'PC',
+                postingDate       : postingDate || new Date().toISOString().split('T')[0],
+                status            : 'POSTED',
+                isCancelled       : 0,
+                cancelledByDoc    : ''
+            });
+
+            const newIssuedQty = parseFloat(comp.issuedQty || 0) + issueQty;
+            const isFullyIssued = newIssuedQty >= parseFloat(comp.requiredQty);
+
+            await UPDATE('sap.production.portal.OrderComponents')
+                .set({
+                    issuedQty: newIssuedQty,
+                    status   : isFullyIssued ? 'ISSD' : 'PISD'
+                })
+                .where({ ID: comp.ID });
+
+            // Check overall order Goods Issue status
+            const updatedComps = await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: order.ID });
+            const allIssued = updatedComps.every(c => c.status === 'ISSD');
+            await UPDATE('sap.production.portal.ProductionOrders')
+                .set({ goodsIssueStatus: allIssued ? 'FULLY_POSTED' : 'PARTIALLY_POSTED' })
+                .where({ ID: order.ID });
+
+            return { success: true, docNum };
+        });
+
+        // ----------------------------------------------------------------
+        // ACTION: Cancel Goods Issue (262 Reversal)
+        // ----------------------------------------------------------------
+        this.on('cancelGoodsIssue', async (req) => {
+            const { orderId, componentId, postingDate } = req.data;
+
+            const order = await orderRepo.selectById(orderId);
+            if (!order) return req.error(404, `Production Order ${orderId} not found.`);
+
+            const isDlfl = order.deletionFlag === true ||
+                           String(order.systemStatus || '').includes('DLFL') ||
+                           String(order.status || '').includes('DLFL');
+            if (isDlfl) {
+                return req.error(400, `Goods Issue reversal cannot be posted. Production Order ${order.orderNumber} is marked with Deletion Flag (DLFL).`);
+            }
+
+            await this._resolveOrderCodes(order);
+
+            const comp = (order.components || []).find(c => c.ID === componentId) || await SELECT.one.from('sap.production.portal.OrderComponents').where({ ID: componentId });
+            if (!comp) return req.error(404, `Component ${componentId} not found on Order ${order.orderNumber}.`);
+
+            // Find latest active 261 Goods Issue movement for this component
+            const last261 = await SELECT.one.from('sap.production.portal.GoodsMovements')
+                .where({ order_ID: order.ID, material_ID: comp.componentMaterial_ID, movementType: '261', status: 'POSTED' })
+                .and('isCancelled != 1 or isCancelled is null')
+                .and('cancelledByDoc is null or cancelledByDoc = \'\'')
+                .orderBy('createdAt desc');
+
+            if (!last261) {
+                // Check if a 261 existed that was already reversed
+                const prev261 = await SELECT.one.from('sap.production.portal.GoodsMovements')
+                    .where({ order_ID: order.ID, material_ID: comp.componentMaterial_ID, movementType: '261' })
+                    .orderBy('createdAt desc');
+
+                if (prev261 && (prev261.isCancelled === 1 || prev261.status === 'CANCELLED' || Boolean(prev261.cancelledByDoc))) {
+                    return req.error(400, 'Goods Issue reversal cannot be posted. The selected Goods Issue document has already been reversed.');
+                }
+
+                return req.error(400, `No active Goods Issue (261) document found to cancel for component on Order ${order.orderNumber}.`);
+            }
+
+            const reverseQty = parseFloat(last261.quantity);
+            const compMat = await SELECT.one.from('sap.production.portal.Materials').where({ ID: comp.componentMaterial_ID });
+            const componentCode = compMat?.code || comp.componentMaterialCode || 'COMP-001';
+
+            let docNum = 'GIC' + Math.floor(10000000 + Math.random() * 90000000);
+
+            try {
+                const sap262 = await postSapMaterialDocument({
+                    orderNumber    : order.orderNumber,
+                    material       : componentCode,
+                    plant          : order.plantCode || '',
+                    storageLocation: order.storageLocationCode || '',
+                    movementType   : '262',
+                    quantity       : reverseQty,
+                    unit           : last261.unit || comp.unit || 'PC',
+                    postingDate,
+                    headerText     : `Reversal 262 for doc ${last261.movementNumber}`
+                });
+                docNum = sap262?.MaterialDocument || docNum;
+                console.log(`[SAP] GI 262 Reversal posted: ${docNum} (reversing ${last261.movementNumber})`);
+            } catch (err) {
+                console.error('[SAP] GI 262 Reversal failed:', err.message);
+                return req.error(500, `SAP Goods Issue Reversal Error: ${err.message}`);
+            }
+
+            await INSERT.into('sap.production.portal.GoodsMovements').entries({
+                movementNumber    : docNum,
+                order_ID          : order.ID,
+                material_ID       : comp.componentMaterial_ID,
+                plant_ID          : order.plant_ID,
+                storageLocation_ID: last261.storageLocation_ID || order.storageLocation_ID,
+                movementType      : '262',
+                quantity          : reverseQty,
+                unit              : last261.unit || comp.unit || 'PC',
+                reversalRefDoc    : last261.movementNumber,
+                postingDate       : postingDate || new Date().toISOString().split('T')[0],
+                status            : 'POSTED',
+                isCancelled       : 0,
+                cancelledByDoc    : ''
+            });
+
+            // Mark original 261 as CANCELLED & reversed
+            await UPDATE('sap.production.portal.GoodsMovements')
+                .set({ status: 'CANCELLED', isCancelled: 1, cancelledByDoc: docNum })
+                .where({ ID: last261.ID });
+
+            // Restore component issued quantity
+            const newIssuedQty = Math.max(0, parseFloat(comp.issuedQty || 0) - reverseQty);
+            const compStatus = newIssuedQty <= 0 ? 'RESV' : 'PISD';
+
+            await UPDATE('sap.production.portal.OrderComponents')
+                .set({
+                    issuedQty: newIssuedQty,
+                    status   : compStatus
+                })
+                .where({ ID: comp.ID });
+
+            const updatedComps = await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: order.ID });
+            const anyIssued = updatedComps.some(c => parseFloat(c.issuedQty || 0) > 0);
+            await UPDATE('sap.production.portal.ProductionOrders')
+                .set({ goodsIssueStatus: anyIssued ? 'PARTIALLY_POSTED' : 'NOT_POSTED' })
+                .where({ ID: order.ID });
 
             return { success: true, docNum };
         });
@@ -2050,36 +2810,148 @@ this.on('closeProductionOrder', async (req) => {
 });
 
 // ----------------------------------------------------------------
+// ACTION: Synchronize Single Order from SAP
+// ----------------------------------------------------------------
+this.on('syncSingleOrder', async (req) => {
+    const { orderId } = req.data;
+    const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ ID: orderId });
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    if (!order.orderNumber) {
+        return req.error(400, 'Order does not have a valid SAP ManufacturingOrder number.');
+    }
+
+    // Set status to SYNCING
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({ lastSapSyncStatus: 'SYNCING' })
+        .where({ ID: order.ID });
+
+    const sapRes = await sapCloudSync.fetchOrderFromSap(order.orderNumber);
+    const syncTimestamp = new Date().toISOString();
+
+    if (!sapRes.success || !sapRes.data) {
+        const errorMsg = sapRes.error || 'Failed to fetch order from SAP S/4HANA Public Cloud';
+        await UPDATE('sap.production.portal.ProductionOrders')
+            .set({
+                lastSapSyncAt: syncTimestamp,
+                lastSapSyncStatus: 'FAILED',
+                lastSapSyncError: errorMsg
+            })
+            .where({ ID: order.ID });
+
+        return req.error(400, `SAP Synchronization failed: ${errorMsg}`);
+    }
+
+    const sapOrder = sapRes.data;
+    const systemStatus = deriveOrderStatus(sapOrder);
+
+    // Reconcile Goods Issue and Goods Receipt Statuses independently
+    const movements = await SELECT.from('sap.production.portal.GoodsMovements').where({ order_ID: order.ID });
+    const gr101Qty = (movements || []).filter(m => m.movementType === '101' && !m.isCancelled).reduce((s, m) => s + (parseFloat(m.quantity) || 0), 0);
+    const gr102Qty = (movements || []).filter(m => m.movementType === '102').reduce((s, m) => s + (parseFloat(m.quantity) || 0), 0);
+    const netReceivedQty = Math.max(0, gr101Qty - gr102Qty);
+    const targetQty = parseFloat(sapOrder.TotalQuantity) || 0;
+
+    const gi261Qty = (movements || []).filter(m => m.movementType === '261' && !m.isCancelled).reduce((s, m) => s + (parseFloat(m.quantity) || 0), 0);
+    const gi262Qty = (movements || []).filter(m => m.movementType === '262').reduce((s, m) => s + (parseFloat(m.quantity) || 0), 0);
+    const netIssuedQty = Math.max(0, gi261Qty - gi262Qty);
+
+    const components = await SELECT.from('sap.production.portal.OrderComponents').where({ order_ID: order.ID });
+    const totalCompRequired = (components || []).reduce((s, c) => s + (parseFloat(c.requiredQty) || 0), 0);
+    const totalCompIssued = (components || []).reduce((s, c) => s + (parseFloat(c.issuedQty) || 0), 0);
+
+    let goodsIssueStatus = 'NOT_POSTED';
+    if (totalCompIssued >= totalCompRequired && totalCompRequired > 0) goodsIssueStatus = 'POSTED';
+    else if (totalCompIssued > 0 || netIssuedQty > 0) goodsIssueStatus = (totalCompRequired > 0 && totalCompIssued < totalCompRequired) ? 'PARTIAL' : 'POSTED';
+
+    let goodsReceiptStatus = 'NOT_POSTED';
+    if (netReceivedQty >= targetQty && targetQty > 0) goodsReceiptStatus = 'POSTED';
+    else if (netReceivedQty > 0) goodsReceiptStatus = 'PARTIAL';
+
+    await UPDATE('sap.production.portal.ProductionOrders')
+        .set({
+            status            : systemStatus,
+            systemStatus      : systemStatus,
+            goodsIssueStatus  : goodsIssueStatus,
+            goodsReceiptStatus: goodsReceiptStatus,
+            targetQty         : targetQty,
+            confirmedQty      : parseFloat(sapOrder.MfgOrderConfirmedYieldQty) || order.confirmedQty,
+            deliveredQty      : netReceivedQty,
+            plannedStartDate  : sapOrder.MfgOrderPlannedStartDate || order.plannedStartDate,
+            plannedEndDate    : sapOrder.MfgOrderPlannedEndDate || order.plannedEndDate,
+            actualStartDate   : sapOrder.MfgOrderActualReleaseDate || order.actualStartDate,
+            lastSapSyncAt     : syncTimestamp,
+            lastSapSyncStatus : 'SUCCESS',
+            lastSapSyncError  : null
+        })
+        .where({ ID: order.ID });
+
+    broadcastEvent({
+        source: 'SAP_PRODUCTION_SERVICE',
+        eventType: 'ProductionOrder.StatusChanged',
+        orderNumber: order.orderNumber,
+        status: systemStatus,
+        timestamp: syncTimestamp
+    });
+
+    return {
+        success           : true,
+        orderNumber       : order.orderNumber,
+        systemStatus      : systemStatus,
+        goodsIssueStatus  : goodsIssueStatus,
+        goodsReceiptStatus: goodsReceiptStatus,
+        lastSapSyncAt     : syncTimestamp,
+        message           : `Production Order ${order.orderNumber} successfully synchronized with SAP Public Cloud.`
+    };
+});
+
+// ----------------------------------------------------------------
 // ACTION: Change Net Quantity
 // ----------------------------------------------------------------
 this.on('changeNetQuantity', async (req) => {
     const { orderId, newQuantity, reason } = req.data;
+    const userRole = (req.headers['x-user-role'] || '').toUpperCase();
+    
+    // Check permission: CHANGE_ORDER_QUANTITY (PROD_PLANNER, PROD_MANAGER, ADMIN)
+    const allowedRoles = ['PROD_PLANNER', 'PROD_MANAGER', 'PRODUCTION_PLANNER', 'PRODUCTION_MANAGER', 'ADMIN'];
+    if (!userRole || !allowedRoles.includes(userRole)) {
+        return req.error(403, 'Unauthorized: You do not have permission (CHANGE_ORDER_QUANTITY) to change Target Quantity.');
+    }
+
     const order = await orderRepo.selectWithOperationsAndComponents(orderId);
     if (!order) return req.error(404, `Order ${orderId} not found.`);
 
-    if (['CNF', 'TECO', 'CLSD'].includes(order.status)) {
-        return req.error(400, `Cannot change quantity in status ${order.status}. Must be in CRTD, MACA, or REL.`);
+    // Use systemStatus as absolute lifecycle authority
+    const currentSysStatus = order.systemStatus || order.status || 'CRTD';
+
+    // Disallowed statuses: DLV, TECO, CLSD
+    if (['DLV', 'TECO', 'CLSD'].includes(currentSysStatus)) {
+        let reasonStr = 'technically completed';
+        if (currentSysStatus === 'DLV') reasonStr = 'delivered';
+        if (currentSysStatus === 'CLSD') reasonStr = 'closed';
+        return req.error(400, `Target Quantity cannot be changed because the Production Order is ${reasonStr} (${currentSysStatus}).`);
     }
 
     const newQty = parseFloat(newQuantity);
-    if (!newQty || newQty <= 0) {
-        return req.error(400, 'New quantity must be greater than zero.');
+    if (isNaN(newQty) || newQty <= 0) {
+        return req.error(400, 'Target Quantity must be a valid numeric value greater than zero.');
     }
 
+    // Detailed activity validations
     const confirmedQty = parseFloat(order.confirmedQty) || 0;
     if (newQty < confirmedQty) {
-        return req.error(400, `Cannot reduce quantity below already confirmed quantity (${confirmedQty}).`);
+        return req.error(400, `Target Quantity cannot be reduced below the quantity already confirmed (${confirmedQty} PC).`);
     }
 
     const deliveredQty = parseFloat(order.deliveredQty) || 0;
     if (newQty < deliveredQty) {
-        return req.error(400, `Cannot reduce quantity below already delivered quantity (${deliveredQty}).`);
+        return req.error(400, `Target Quantity cannot be reduced below the quantity already delivered (${deliveredQty} PC).`);
     }
 
-    const oldQty = parseFloat(order.targetQty);
-    const ratio = newQty / oldQty;
+    const oldQty = parseFloat(order.targetQty) || 0;
+    const ratio = oldQty > 0 ? (newQty / oldQty) : 1;
 
-    // Sync quantity change to SAP S/4HANA Public Cloud FIRST
+    // Execute SAP S/4HANA Public Cloud update
     if (order.orderNumber) {
         const patchRes = await sapCloudSync.patchOrder(order.orderNumber, { TotalQuantity: newQty });
         if (!patchRes.success) {
@@ -2087,9 +2959,10 @@ this.on('changeNetQuantity', async (req) => {
         }
     }
 
-    // Proportionally update all component required quantities
+    // Proportionally update component requirements
     for (const comp of (order.components || [])) {
-        const newReq = Math.round(parseFloat(comp.requiredQty) * ratio * 1000) / 1000;
+        const currentReq = parseFloat(comp.requiredQty) || 0;
+        const newReq = Math.round(currentReq * ratio * 1000) / 1000;
         await UPDATE('sap.production.portal.OrderComponents')
             .set({ requiredQty: newReq })
             .where({ ID: comp.ID });
@@ -2099,12 +2972,17 @@ this.on('changeNetQuantity', async (req) => {
         .set({ targetQty: newQty })
         .where({ ID: order.ID });
 
-    await this._logAudit(req.headers['x-user-id'], 'CHANGE_NET_QTY', 'ProductionOrders', order.ID,
-        JSON.stringify({ targetQty: oldQty }),
-        JSON.stringify({ targetQty: newQty, reason: reason || '' })
+    // Comprehensive Audit Log entry
+    await this._logAudit(
+        req.headers['x-user-id'],
+        'CHANGE_ORDER_QUANTITY',
+        'ProductionOrders',
+        order.ID,
+        JSON.stringify({ orderNumber: order.orderNumber, field: 'Target Quantity', oldValue: `${oldQty} PC`, systemStatus: currentSysStatus }),
+        JSON.stringify({ newValue: `${newQty} PC`, unit: 'PC', userRole, reason: reason || 'Target Quantity modified by authorized planner', timestamp: new Date().toISOString() })
     );
 
-    return { success: true, message: `Order quantity updated from ${oldQty} to ${newQty}.` };
+    return { success: true, message: `Target Quantity for Order ${order.orderNumber || order.ID} successfully updated from ${oldQty} PC to ${newQty} PC.` };
 });
 
 // ----------------------------------------------------------------
@@ -2216,6 +3094,22 @@ this.on('calculateGoodsMovementEligibility', async (req) => {
     const resultItems = [];
 
     if (actionType === 'A07') {
+        const isOrderDlfl = Boolean(
+            order.deletionFlag === true ||
+            String(order.systemStatus || '').includes('DLFL') ||
+            String(order.status || '').includes('DLFL')
+        );
+        if (isOrderDlfl) {
+            return {
+                success: false,
+                message: `Goods Issue cannot be posted for Production Order ${order.orderNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`,
+                orderNumber: order.orderNumber,
+                action: actionType,
+                orderStatus: order.status,
+                canPost: false,
+                items: []
+            };
+        }
         for (let idx = 0; idx < (comps || []).length; idx++) {
             const c = comps[idx];
             const mat = c.componentMaterial_ID ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: c.componentMaterial_ID }) : null;
@@ -2332,14 +3226,26 @@ this.on('postGoodsMovement', async (req) => {
 
     // 2. A03 Cancellation Posting
     if (actionType === 'A03') {
-        const origDocs = await SELECT.from('sap.production.portal.GoodsMovements').where({ movementNumber: docNumber });
+        const cleanDocNum = String(docNumber || '').trim();
+        const unpaddedDocNum = cleanDocNum.replace(/^0+/, '');
+        const paddedDocNum10 = cleanDocNum.padStart(10, '0');
+        const giNum = cleanDocNum.startsWith('GI') ? cleanDocNum : 'GI' + cleanDocNum;
+
+        let origDocs = await SELECT.from('sap.production.portal.GoodsMovements')
+            .where({ movementNumber: { in: [cleanDocNum, unpaddedDocNum, paddedDocNum10, giNum] } });
+
         if (!origDocs || origDocs.length === 0) {
             return req.error(404, `Material Document ${docNumber} not found.`);
         }
-        
+
+        const uncancelledOrigs = origDocs.filter(d => !d.isCancelled && d.status !== 'CANCELLED' && !d.cancelledByDoc);
+        if (uncancelledOrigs.length === 0) {
+            return req.error(400, 'Goods Issue reversal cannot be posted. The selected Goods Issue document has already been reversed.');
+        }
+
         const revDocNum = '50' + Math.floor(10000000 + Math.random() * 90000000);
 
-        for (const orig of origDocs) {
+        for (const orig of uncancelledOrigs) {
             const revMvtType = orig.movementType === '101' ? '102' : (orig.movementType === '261' ? '262' : '999');
             
             const userId = req.headers ? (req.headers['x-user-id'] || 'SYSTEM') : 'SYSTEM';
@@ -2423,8 +3329,11 @@ this.on('postGoodsMovement', async (req) => {
 
     // 3. A07 Goods Issue Posting
     if (actionType === 'A07') {
-        const docNum = '49' + Math.floor(10000000 + Math.random() * 90000000);
         const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
+        if (order && (order.deletionFlag === true || String(order.systemStatus || '').includes('DLFL') || String(order.status || '').includes('DLFL'))) {
+            return req.error(400, `Goods Issue cannot be posted for Production Order ${order.orderNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
+        }
+        const docNum = '49' + Math.floor(10000000 + Math.random() * 90000000);
         const userId = req.headers ? (req.headers['x-user-id'] || 'SYSTEM') : 'SYSTEM';
         const nowIso = new Date().toISOString();
 
@@ -2782,6 +3691,123 @@ this.on('getStatusChanges', async (req) => {
         changedAt: c.changedAt || '',
         remark: c.remark || ''
     }));
+});
+
+// Helper: Normalize Production Order Number (removes leading zeros and trims whitespace)
+const normalizeOrderNumber = (val) => {
+    if (!val) return '';
+    const str = String(val).trim();
+    // Remove leading zeros if numeric string
+    return str.replace(/^0+/, '');
+};
+
+// ----------------------------------------------------------------
+// ACTION: Get Documented Goods Movements
+// ----------------------------------------------------------------
+this.on('getDocumentedGoodsMovements', async (req) => {
+    const { orderId } = req.data;
+    const order = await orderRepo.selectById(orderId);
+    if (!order) return req.error(404, `Order ${orderId} not found.`);
+
+    const rawOrderNum = order.orderNumber || '';
+    const normOrderNum = normalizeOrderNumber(rawOrderNum);
+
+    // 1. Fetch total goods movements in DB for diagnostic tracking
+    const allMovements = await SELECT.from('sap.production.portal.GoodsMovements');
+    console.log(`[DIAGNOSTIC] Order lookup for orderId: ${orderId}, orderNumber: ${rawOrderNum} (norm: ${normOrderNum}). Total GoodsMovements in DB: ${(allMovements || []).length}`);
+
+    // 2. Fetch movements matching by order_ID (UUID relationship)
+    let movements = await SELECT.from('sap.production.portal.GoodsMovements')
+        .where({ order_ID: orderId })
+        .orderBy('movementNumber asc', 'createdAt asc');
+
+    // 3. Fallback: If no movements matched by UUID, search by normalized orderNumber or headerText matching
+    if (!movements || movements.length === 0) {
+        console.log(`[DIAGNOSTIC] No movements directly linked by order_ID ${orderId}. Attempting fallback lookup by orderNumber/headerText...`);
+        
+        movements = (allMovements || []).filter(m => {
+            if (m.order_ID === orderId) return true;
+            
+            // Check headerText or materialSlip for orderNumber reference
+            const hText = m.headerText || '';
+            const slip = m.materialSlip || '';
+            const mvtNum = m.movementNumber || '';
+            
+            if (normOrderNum) {
+                if (normalizeOrderNumber(hText).includes(normOrderNum)) return true;
+                if (normalizeOrderNumber(slip).includes(normOrderNum)) return true;
+                if (normalizeOrderNumber(mvtNum).includes(normOrderNum)) return true;
+            }
+            return false;
+        });
+
+        // Link matched movements to order_ID for future queries
+        for (const mvt of movements) {
+            if (!mvt.order_ID) {
+                await UPDATE('sap.production.portal.GoodsMovements')
+                    .set({ order_ID: orderId })
+                    .where({ ID: mvt.ID });
+                console.log(`[DIAGNOSTIC] Linked unlinked movement ${mvt.movementNumber} to ProductionOrder ${rawOrderNum} (${orderId})`);
+            }
+        }
+    }
+
+    console.log(`[DIAGNOSTIC] Order ${rawOrderNum}: Found ${movements.length} matching GoodsMovements records.`);
+
+    // Helper map for movement categories
+    const getMvtCategory = (mvtType) => {
+        switch (mvtType) {
+            case '261': return 'Goods Issue';
+            case '262': return 'Goods Issue Reversal';
+            case '101': return 'Goods Receipt';
+            case '102': return 'Goods Receipt Reversal';
+            case '551': return 'Scrapping';
+            case '350': return 'QM Transfer';
+            default: return `Movement ${mvtType}`;
+        }
+    };
+
+    // Group items per document number to calculate item numbers (10, 20, 30...)
+    const docItemCounterMap = new Map();
+    const results = [];
+
+    for (const mvt of (movements || [])) {
+        const docNum = mvt.movementNumber || '0000000000';
+        const currentItemNum = (docItemCounterMap.get(docNum) || 0) + 10;
+        docItemCounterMap.set(docNum, currentItemNum);
+
+        const mat = mvt.material_ID
+            ? await SELECT.one.from('sap.production.portal.Materials').where({ ID: mvt.material_ID })
+            : null;
+        const plant = mvt.plant_ID
+            ? await SELECT.one.from('sap.production.portal.Plants').where({ ID: mvt.plant_ID })
+            : null;
+        const sloc = mvt.storageLocation_ID
+            ? await SELECT.one.from('sap.production.portal.StorageLocations').where({ ID: mvt.storageLocation_ID })
+            : null;
+
+        results.push({
+            ID                 : mvt.ID,
+            docNumber          : docNum,
+            movementYear       : mvt.movementYear || new Date().getFullYear().toString(),
+            itemNumber         : String(currentItemNum),
+            movementType       : mvt.movementType || '261',
+            movementCategory   : getMvtCategory(mvt.movementType),
+            materialCode       : mat?.code || '100036',
+            materialDescription: mat?.description || mat?.name || 'Component Material',
+            quantity           : parseFloat(mvt.quantity) || 0,
+            unit               : mvt.unit || mat?.baseUnit || 'PC',
+            postingDate        : mvt.postingDate ? String(mvt.postingDate).split('T')[0] : new Date().toISOString().split('T')[0],
+            documentDate       : mvt.documentDate ? String(mvt.documentDate).split('T')[0] : new Date().toISOString().split('T')[0],
+            plantCode          : plant?.code || '1102',
+            storageLocationCode: sloc?.code || 'RAW1',
+            orderNumber        : rawOrderNum || '600162',
+            stockType          : mvt.stockType || 'Unrestricted-Use',
+            status             : mvt.status || 'POSTED'
+        });
+    }
+
+    return results;
 });
 
 // ----------------------------------------------------------------
@@ -4240,13 +5266,20 @@ this.on('closeOrder', async (req) => {
                 errors.push('Material Document number is required for cancellation.');
                 return { success: false, message: 'Check failed', errors };
             }
-            const matDocList = await SELECT.from('sap.production.portal.GoodsMovements').where({ movementNumber: docNumber });
+            const cleanDocNum = String(docNumber || '').trim();
+            const unpaddedDocNum = cleanDocNum.replace(/^0+/, '');
+            const paddedDocNum10 = cleanDocNum.padStart(10, '0');
+            const giNum = cleanDocNum.startsWith('GI') ? cleanDocNum : 'GI' + cleanDocNum;
+
+            const matDocList = await SELECT.from('sap.production.portal.GoodsMovements')
+                .where({ movementNumber: { in: [cleanDocNum, unpaddedDocNum, paddedDocNum10, giNum] } });
+
             if (!matDocList || matDocList.length === 0) {
                 errors.push(`Material Document ${docNumber} not found.`);
                 return { success: false, message: 'Check failed', errors };
             }
-            if (matDocList.some(m => m.isCancelled)) {
-                errors.push(`Material Document ${docNumber} is already cancelled.`);
+            if (matDocList.every(m => m.isCancelled || m.status === 'CANCELLED' || Boolean(m.cancelledByDoc))) {
+                errors.push(`No selectable items found. All Goods Issue items in Material Document ${docNumber} have already been reversed.`);
                 return { success: false, message: 'Check failed', errors };
             }
             return { success: true, message: `Material Document ${docNumber} is eligible for cancellation.`, errors: [] };
@@ -4262,6 +5295,14 @@ this.on('closeOrder', async (req) => {
                 const order = await SELECT.one.from('sap.production.portal.ProductionOrders').where({ orderNumber: docNumber });
                 if (!order) {
                     errors.push(`Order ${docNumber} not found.`);
+                    return { success: false, message: 'Check failed', errors };
+                }
+
+                const isDlfl = order.deletionFlag === true ||
+                               String(order.systemStatus || '').includes('DLFL') ||
+                               String(order.status || '').includes('DLFL');
+                if (isDlfl) {
+                    errors.push(`Goods Issue cannot be posted for Production Order ${order.orderNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`);
                     return { success: false, message: 'Check failed', errors };
                 }
 

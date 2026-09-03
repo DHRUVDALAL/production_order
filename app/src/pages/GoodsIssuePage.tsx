@@ -214,7 +214,22 @@ export const GoodsIssuePage: React.FC = () => {
     queryKey: ['giCurrentMatDocData', activeDocNumber],
     queryFn: async () => {
       if (!activeDocNumber || (currentRefCode !== 'R02' && currentActionCode !== 'A03' && currentActionCode !== 'A04')) return null;
-      const res = await api.get(`/odata/v4/production/GoodsMovements?$filter=movementNumber eq '${activeDocNumber}'&$expand=order,purchaseOrder,material,plant,storageLocation`);
+      const cleanNum = activeDocNumber.trim();
+      const unpaddedNum = cleanNum.replace(/^0+/, '');
+      const paddedNum10 = cleanNum.padStart(10, '0');
+      const paddedNum12 = cleanNum.padStart(12, '0');
+
+      const filterParts = [
+        `movementNumber eq '${cleanNum}'`,
+        `movementNumber eq '${unpaddedNum}'`,
+        `movementNumber eq '${paddedNum10}'`,
+        `movementNumber eq '${paddedNum12}'`
+      ];
+      if (!cleanNum.startsWith('GI')) {
+        filterParts.push(`movementNumber eq 'GI${cleanNum}'`);
+      }
+
+      const res = await api.get(`/odata/v4/production/GoodsMovements?$filter=${filterParts.join(' or ')}&$expand=order,purchaseOrder,material,plant,storageLocation`);
       return res.data?.value || [];
     },
     enabled: !!activeDocNumber && (currentRefCode === 'R02' || currentActionCode === 'A03' || currentActionCode === 'A04')
@@ -227,7 +242,7 @@ export const GoodsIssuePage: React.FC = () => {
       if (target) {
         setTransType('Goods Issue');
         setRefType('Order');
-        setDocInputNumber(target.orderNumber);
+        setRawDocInput(target.orderNumber);
       }
     }
   }, [paramOrderId, allOrders]);
@@ -260,6 +275,18 @@ export const GoodsIssuePage: React.FC = () => {
       }
 
       if (currentOrderData) {
+        const isOrderDlfl = Boolean(
+          currentOrderData.deletionFlag === true ||
+          (currentOrderData.systemStatus || currentOrderData.status || '').includes('DLFL')
+        );
+        if (isOrderDlfl) {
+          setItems([]);
+          setValidationErrors([
+            `Goods Issue cannot be posted for Production Order ${currentOrderData.orderNumber || activeDocNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.`
+          ]);
+          return;
+        }
+
         const comps = currentOrderData.components || [];
         const selectableComps = comps.filter((c: any) => {
           const reqQty = parseFloat(c.requiredQty) || 0;
@@ -418,12 +445,21 @@ export const GoodsIssuePage: React.FC = () => {
     // 4. A03 (Cancellation)
     else if (currentActionCode === 'A03') {
       if (currentMatDocData && currentMatDocData.length > 0) {
-        const formatted = currentMatDocData.map((m: any, idx: number) => ({
+        const unreversedItems = currentMatDocData.filter((m: any) => !m.isCancelled && m.status !== 'CANCELLED' && !m.cancelledByDoc);
+
+        if (unreversedItems.length === 0) {
+          setItems([]);
+          setValidationErrors([`No selectable items found. All Goods Issue items in Material Document ${activeDocNumber} have already been reversed.`]);
+          return;
+        }
+
+        const formatted = unreversedItems.map((m: any, idx: number) => ({
           line: idx + 1,
           matDocId: m.ID,
-          materialCode: m.material?.code || 'MAT-DOC',
+          materialCode: m.material?.code || m.materialCode || 'MAT-DOC',
           materialDesc: m.material?.description || 'Material Document Item',
           ok: true,
+          requiredQty: m.quantity,
           qtyInEntry: m.quantity,
           unit: m.unit || 'PC',
           plantCode: m.plant?.code || '1102',
@@ -431,16 +467,12 @@ export const GoodsIssuePage: React.FC = () => {
           movementType: m.movementType === '101' ? '102' : '262',
           orderNumber: m.order?.orderNumber,
           poNumber: m.purchaseOrder?.poNumber,
-          isCancelled: m.isCancelled
+          isCancelled: false
         }));
 
         setItems(formatted);
         if (formatted.length > 0) setSelectedItemIdx(0);
-
-        if (currentMatDocData.some((m: any) => m.isCancelled)) {
-          setValidationErrors([`Material Document ${activeDocNumber} is already cancelled.`]);
-        }
-      } else if (activeDocNumber && !currentMatDocData?.length) {
+      } else if (activeDocNumber && (!currentMatDocData || currentMatDocData.length === 0)) {
         setItems([]);
         setValidationErrors([`Material Document ${activeDocNumber} not found.`]);
       }
@@ -541,6 +573,10 @@ export const GoodsIssuePage: React.FC = () => {
   const buildPayload = () => {
     if (currentActionCode === 'A04') {
       return { error: 'Display mode is READ-ONLY. Posting/Checking is disabled.' };
+    }
+
+    if (currentActionCode === 'A07' && currentOrderData && (currentOrderData.deletionFlag === true || (currentOrderData.systemStatus || currentOrderData.status || '').includes('DLFL'))) {
+      return { error: `Goods Issue cannot be posted for Production Order ${currentOrderData.orderNumber || activeDocNumber}. The order is marked with Deletion Flag (DLFL). Further goods movements are not permitted.` };
     }
 
     if (!activeDocNumber.trim() && currentRefCode !== 'R10') {
@@ -1135,18 +1171,20 @@ export const GoodsIssuePage: React.FC = () => {
         </button>
         <button 
           onClick={handleCheck} 
-          disabled={checkMutation.isPending || currentActionCode === 'A04'}
+          disabled={checkMutation.isPending || currentActionCode === 'A04' || (currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL')))}
+          title={(currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL'))) ? "Goods Issue is not allowed. Production Order has Deletion Flag (DLFL)." : ""}
           className="sap-btn sap-btn-secondary"
-          style={{ padding: '6px 18px', fontSize: '0.85rem', cursor: 'pointer', borderRadius: '4px', border: '1px solid #0a6ed1', backgroundColor: '#fff', color: '#0a6ed1', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+          style={{ padding: '6px 18px', fontSize: '0.85rem', cursor: (currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL'))) ? 'not-allowed' : 'pointer', borderRadius: '4px', border: '1px solid #0a6ed1', backgroundColor: '#fff', color: '#0a6ed1', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
         >
           <CheckCircle size={15} color="#0a6ed1" />
           Check
         </button>
         <button 
           onClick={handlePost} 
-          disabled={postMutation.isPending || currentActionCode === 'A04'}
+          disabled={postMutation.isPending || currentActionCode === 'A04' || (currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL')))}
+          title={(currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL'))) ? "Goods Issue is not allowed. Production Order has Deletion Flag (DLFL)." : ""}
           className="sap-btn sap-btn-primary"
-          style={{ padding: '6px 20px', fontSize: '0.85rem', cursor: 'pointer', borderRadius: '4px', border: 'none', backgroundColor: '#0a6ed1', color: '#fff', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+          style={{ padding: '6px 20px', fontSize: '0.85rem', cursor: (currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL'))) ? 'not-allowed' : 'pointer', borderRadius: '4px', border: 'none', backgroundColor: (currentActionCode === 'A07' && Boolean(currentOrderData?.deletionFlag || (currentOrderData?.systemStatus || currentOrderData?.status || '').includes('DLFL'))) ? '#cccccc' : '#0a6ed1', color: '#fff', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}
         >
           <FileText size={15} />
           POST

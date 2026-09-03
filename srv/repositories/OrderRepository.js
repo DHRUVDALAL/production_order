@@ -24,7 +24,13 @@ export default class OrderRepository extends BaseRepository {
                 o.plant(p => { p('*') }),
                 o.storageLocation(s => { s('*') }),
                 o.operations(op => { op('*') }),
-                o.components(c => { c('*') })
+                o.components(c => { c('*') }),
+                o.goodsMovements(gm => { 
+                    gm('*'),
+                    gm.material(m => { m('*') }),
+                    gm.plant(p => { p('*') }),
+                    gm.storageLocation(s => { s('*') })
+                })
             });
     }
 }

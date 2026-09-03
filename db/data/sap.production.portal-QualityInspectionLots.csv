@@ -1,2 +1,2 @@
-ID,lotNumber,order_ID,material_ID,plant_ID,lotQty,inspectedQty,approvedQty,rejectedQty,usageDecision,status,inspector_ID,decisionDate
-2aa9421b-2d4e-4260-a328-c0939f8dd88a,"040000000005",6868a345-a3c3-4c98-9bed-dfd055c49afb,1b72f798-3fc2-4714-96e3-625feb9d2265,9a600377-4b5d-4739-a90a-8ef135614126,100,0,0,0,"","CRTD",null,null
+ID,lotNumber,order_ID,material_ID,plant_ID,operation_ID,operationSequence,inspectionType,inspectionTypeDesc,inspectionStage,lotQty,inspectedQty,approvedQty,rejectedQty,resultsRecorded,resultsStatus,resultsRecordedAt,usageDecisionStatus,usageDecision,status,inspector_ID,decisionDate
+2aa9421b-2d4e-4260-a328-c0939f8dd88a,"040000000005",6868a345-a3c3-4c98-9bed-dfd055c49afb,1b72f798-3fc2-4714-96e3-625feb9d2265,9a600377-4b5d-4739-a90a-8ef135614126,null,null,"04","Post-Production Inspection","POST_PRODUCTION",100,0,0,0,false,"PENDING",null,"PENDING","","CREATED",null,null

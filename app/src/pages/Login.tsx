@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ShieldCheck, User } from 'lucide-react';
 
@@ -63,16 +63,32 @@ export const Login: React.FC = () => {
         overflow: 'hidden'
       }}>
         <div style={{
-          background: 'linear-gradient(135deg, #0a6ed1 0%, #0854a0 100%)',
-          padding: '2rem',
-          color: '#ffffff',
+          background: '#ffffff',
+          borderBottom: '1px solid #e2e8f0',
+          padding: '2rem 1.5rem 1.5rem',
+          color: '#082641',
           textAlign: 'center'
         }}>
-          <div style={{ display: 'inline-flex', padding: '10px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.1)', marginBottom: '1rem' }}>
-            <ShieldCheck size={36} />
+          <img 
+            src="/branding/prodops-logo.png" 
+            alt="ProdOps — Production Planning, Execution & Quality Platform" 
+            style={{ width: '100%', maxWidth: '320px', height: 'auto', display: 'block', margin: '0 auto 0.6rem' }} 
+          />
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: '#f1f5f9',
+            border: '1px solid #cbd5e1',
+            color: '#334155',
+            padding: '3px 10px',
+            borderRadius: '12px',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            letterSpacing: '0.3px'
+          }}>
+            SAP S/4HANA Production Operations
           </div>
-          <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>SAP S/4HANA Manufacturing</h1>
-          <p style={{ fontSize: '0.85rem', opacity: 0.85, marginTop: '0.25rem' }}>Production Order Management Portal</p>
         </div>
 
         <form onSubmit={handleLogin} style={{ padding: '2rem' }}>
@@ -159,6 +175,11 @@ export const Login: React.FC = () => {
                 <strong>{du.role}</strong>: {du.username}
               </button>
             ))}
+          </div>
+          <div style={{ marginTop: '1.25rem', paddingTop: '0.85rem', borderTop: '1px solid #e9ecef', textAlign: 'center' }}>
+            <Link to="/landing" style={{ fontSize: '0.78rem', color: '#0a6ed1', textDecoration: 'none', fontWeight: 600 }}>
+              ← Return to ProdOps Platform Overview
+            </Link>
           </div>
         </div>
       </div>

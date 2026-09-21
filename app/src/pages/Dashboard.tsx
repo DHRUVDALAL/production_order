@@ -68,10 +68,23 @@ export const Dashboard: React.FC = () => {
       {/* Header Panel */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <span style={{ 
+              fontSize: '0.7rem', 
+              fontWeight: 700, 
+              color: '#082641', 
+              backgroundColor: '#e2e8f0', 
+              padding: '2px 8px', 
+              borderRadius: '4px',
+              letterSpacing: '0.5px' 
+            }}>
+              PRODOPS
+            </span>
+            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>SAP S/4HANA Manufacturing Operations</span>
+          </div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#32363a' }}>Manufacturing Executive Dashboard</h2>
           <p style={{ fontSize: '0.85rem', color: '#6a7b8c' }}>Real-time production visibility, operation throughput, and quality metrics.</p>
         </div>
-
       </div>
 
       {/* KPI Tiles (Standard SAP Fiori Style - Clickable to navigate with filters) */}

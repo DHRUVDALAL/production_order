@@ -304,3 +304,20 @@ body {
   font-weight: 600;
 }
 
+/* Responsive Navigation for Landing Page */
+@media (max-width: 960px) {
+  .desktop-nav {
+    display: none !important;
+  }
+}
+
+@media (min-width: 961px) {
+  .mobile-menu-btn {
+    display: none !important;
+  }
+  .mobile-nav-drawer {
+    display: none !important;
+  }
+}
+
+

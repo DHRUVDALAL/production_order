@@ -1,10 +1,11 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { RealTimeProvider } from './contexts/RealTimeContext';
 import { RouteGuard } from './components/RouteGuard';
 import { ShellBar } from './components/ShellBar';
 import { Login } from './pages/Login';
+import { LandingPage } from './pages/LandingPage';
 import { Dashboard } from './pages/Dashboard';
 import { ProductionOrders } from './pages/ProductionOrders';
 import { ProductionOrderDetail } from './pages/ProductionOrderDetail';
@@ -19,6 +20,53 @@ import { ChangeManagementPage } from './pages/ChangeManagementPage';
 import { StockRequirementsPage } from './pages/StockRequirementsPage';
 import { OutputManagementPage } from './pages/OutputManagementPage';
 import { GoodsIssuePage } from './pages/GoodsIssuePage';
+
+const PageTitleUpdater: React.FC = () => {
+  const location = useLocation();
+
+  React.useEffect(() => {
+    const path = location.pathname;
+    if (path === '/') {
+      document.title = 'ProdOps | Dashboard';
+    } else if (path === '/landing') {
+      document.title = 'ProdOps | Production Planning, Execution & Quality Platform';
+    } else if (path === '/orders') {
+      document.title = 'ProdOps | Production Orders';
+    } else if (path.startsWith('/orders/') && path.includes('/goods-issue')) {
+      document.title = 'ProdOps | Goods Issue';
+    } else if (path.startsWith('/orders/') && path.includes('/missing-parts')) {
+      document.title = 'ProdOps | Missing Parts';
+    } else if (path.startsWith('/orders/') && path.includes('/status-changes')) {
+      document.title = 'ProdOps | Status Changes';
+    } else if (path.startsWith('/orders/') && path.includes('/change-management')) {
+      document.title = 'ProdOps | Change Management';
+    } else if (path.startsWith('/orders/') && path.includes('/outputs')) {
+      document.title = 'ProdOps | Output Management';
+    } else if (path.startsWith('/orders/')) {
+      document.title = 'ProdOps | Order Details';
+    } else if (path === '/operations') {
+      document.title = 'ProdOps | Confirm Operations';
+    } else if (path === '/quality') {
+      document.title = 'ProdOps | Quality Control';
+    } else if (path === '/goods-issue') {
+      document.title = 'ProdOps | Goods Movements';
+    } else if (path === '/stock-requirements') {
+      document.title = 'ProdOps | Stock Requirements';
+    } else if (path === '/inventory') {
+      document.title = 'ProdOps | Stock & Inventory';
+    } else if (path === '/admin') {
+      document.title = 'ProdOps | Administration';
+    } else if (path === '/login') {
+      document.title = 'ProdOps | Login';
+    } else if (path === '/unauthorized') {
+      document.title = 'ProdOps | Unauthorized';
+    } else {
+      document.title = 'ProdOps | Production Planning, Execution & Quality Platform';
+    }
+  }, [location.pathname]);
+
+  return null;
+};
 
 const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
@@ -36,8 +84,10 @@ function App() {
     <AuthProvider>
       <RealTimeProvider>
         <Router>
+          <PageTitleUpdater />
           <Routes>
             {/* Public Routes */}
+            <Route path="/landing" element={<LandingPage />} />
             <Route path="/login" element={<Login />} />
             <Route path="/unauthorized" element={<Unauthorized />} />
 

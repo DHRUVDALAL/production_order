@@ -42,18 +42,23 @@ export const ShellBar: React.FC = () => {
       fontFamily: 'var(--font-sans)'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '2rem' }}>
-        <div style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '0.5px', display: 'flex', alignItems: 'center' }}>
-          SAP S/4HANA
-          <span style={{ 
-            color: '#354a5f', 
-            backgroundColor: '#ffffff', 
-            padding: '2px 6px', 
-            borderRadius: '4px', 
-            marginLeft: '6px',
-            fontSize: '0.75rem',
-            fontWeight: 800
-          }}>PP-PORTAL</span>
-        </div>
+        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }} title="ProdOps Platform">
+          <img src="/branding/prodops-icon-transparent.png" alt="ProdOps" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontWeight: 800, fontSize: '1.15rem', letterSpacing: '-0.3px', color: '#ffffff' }}>
+              Prod<span style={{ color: '#38bdf8' }}>Ops</span>
+            </span>
+            <span style={{ 
+              color: '#1e293b', 
+              backgroundColor: '#e2e8f0', 
+              padding: '1px 5px', 
+              borderRadius: '4px', 
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              letterSpacing: '0.4px'
+            }}>S/4HANA</span>
+          </div>
+        </Link>
         <nav style={{ display: 'flex', gap: '1rem' }}>
           {navItems.filter(item => item.roles.includes(user.role)).map(item => {
             const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));

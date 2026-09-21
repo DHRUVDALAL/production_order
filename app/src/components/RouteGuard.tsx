@@ -23,8 +23,9 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children, allowedRoles }
         color: '#32363a'
       }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>SAP Production Portal</div>
-          <div>Loading Session Parameters...</div>
+          <img src="/branding/prodops-icon-transparent.png" alt="ProdOps" style={{ width: '44px', height: '44px', marginBottom: '10px' }} />
+          <div style={{ fontSize: '20px', fontWeight: 700, marginBottom: '4px', color: '#082641' }}>ProdOps</div>
+          <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Initializing Production Operations Session...</div>
         </div>
       </div>
     );

@@ -8,6 +8,7 @@ default-*.json
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.db
 
 # MTA
 mta_archives/
